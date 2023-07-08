@@ -7,6 +7,7 @@ import torch
 import networkx as nx
 from math import ceil
 from torch_geometric.data import InMemoryDataset
+from typing import Union
 import os
 
 # always have x1 < x2, y1 < y2, z1 < z2
@@ -54,9 +55,9 @@ class LegoBrick():
         if self.brick_id != 0:
             raise ValueError("Only 2x4 bricks currently supported")
         if self.rot == 0:
-            return torch.Tensor([0,0,0,2,4,1])
+            return torch.Tensor([0,0,0,2,4,1.215])
         elif abs(self.rot) == 90:
-            return torch.Tensor([0,0,0,4,2,1])
+            return torch.Tensor([0,0,0,4,2,1.215])
         else:
             raise ValueError("Only 90 degree rotations supported")
     
@@ -132,7 +133,7 @@ class LegoModel(Data):
 
         return model
     
-    def to_voxels(self, *resolution: float | tuple[float,float,float]):
+    def to_voxels(self, *resolution: Union[float, tuple[float,float,float]]):
         """
         Resolution represents the dimensions of an individual voxel. Can be specified by a single number, which is used for all dimensions, or 3 x/y/z resolutions. 
 
