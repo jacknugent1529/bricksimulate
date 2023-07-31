@@ -5,8 +5,10 @@ from torch import nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn
 from torch import Tensor
+from torch.nested import nested_tensor
 from einops import rearrange, einsum
 from ..sequential_dataset import Node, Edge
+from jaxtyping import Float, Int
 
 
 class VoxelNet(nn.Module):
@@ -18,10 +20,10 @@ class VoxelNet(nn.Module):
         self.convs = nn.ModuleList([
             nn.Conv3d(1, 16, kernel_size=3, stride=2),
             nn.Conv3d(16, 64, kernel_size=3, stride=2),
-            nn.Conv3d(64, 256, kernel_size=3, stride=2),
+            nn.Conv3d(64, 128, kernel_size=3, stride=2),
         ])
 
-        self.fc1 = nn.Linear(2048, 512)
+        self.fc1 = nn.Linear(1024, 512)
         self.fc2 = nn.Linear(512, out_dim)
 
     def forward(self, x: Tensor):
@@ -63,32 +65,53 @@ class GraphNet(nn.Module):
         return x
     
 class GraphEmbed(nn.Module):
-    def __init__(self, dim, brick_embed):
+    def __init__(self, dim, brick_embed, max_x_shift, max_y_shift):
         super().__init__()
         self.dim = dim
 
         self.pos_proj = nn.Sequential(
-            nn.Linear(6, dim),
+            nn.Linear(6, 4 * dim),
             nn.SiLU(),
-            nn.Linear(dim, dim),
+            nn.Linear(4 * dim, dim),
             nn.BatchNorm1d(dim)
         )
 
         # shift values range from -3 to 3
-        self.edge_emb = nn.Embedding(7 * 7, dim)
 
         self.brick_emb = brick_embed
 
-    def forward(self, graph):
-        # contains x, pos, edge_attr
-        # x - describes the brick
-        # pos - position (use MLP)
-        # edge_attr - x_shift/y_shift - use learned embedding
+        self.max_x_shift = max_x_shift
+        self.max_y_shift = max_y_shift
+    
+        self.edge_emb = nn.Embedding(self.num_edge_embeddings_undirected, dim)
 
+    @property
+    def num_edge_embeddings(self):
+        return 2 * self.num_edge_embeddings_undirected
+    
+    @property
+    def num_edge_embeddings_undirected(self):
+        return (2 * self.max_x_shift + 1) * (2 * self.max_y_shift + 1)
+    
+    def edge_ids(self, edge_attr, outward=None):
+        x_shift = edge_attr[:,0]
+        y_shift = edge_attr[:,1]
+        num_x_shifts = 2 * self.max_x_shift + 1
+        idx = (
+            (x_shift + self.max_x_shift) * num_x_shifts + 
+            (y_shift + self.max_y_shift)
+        )
+        if outward is not None:
+            idx = 2 * idx + outward
+        return idx.to(int)
+    
+    def embed_edges(self, edge_attr):
+        return self.edge_emb(self.edge_ids(edge_attr))
+
+    def forward(self, graph):
         x = self.brick_emb(graph.x) + self.pos_proj(graph.pos)
 
-        edge_idx = (graph.edge_attr[:,0] + 3) * 7 + (graph.edge_attr[:,1] + 3)
-        edge_attr = self.edge_emb(edge_idx.to(int))
+        edge_attr = self.embed_edges(graph.edge_attr)
 
         return x, edge_attr
 
@@ -96,39 +119,83 @@ class GraphEmbed(nn.Module):
 class BrickEmbed(nn.Module):
     def __init__(self, num_bricks, dim):
         super().__init__()
+        self.num_bricks = num_bricks
         self.emb = nn.Embedding(num_bricks, dim)
     
-    def to_idx(brick):
+    def to_idx(self, brick):
         return brick[:,1] // 90
 
     def forward(self, x):
-        return self.emb(BrickEmbed.to_idx(x))
-    
-class EdgeIdx(nn.Module):
-    def __init__(self, max_x_shift, max_y_shift, dim):
-        super().__init__()
-        self.num_x_shifts = (2 * max_x_shift + 1)
-        self.max_x_shift = max_x_shift
-        self.max_y_shift = max_y_shift
-        self.num_embs = self.num_x_shifts * (2 * max_y_shift + 1) * 2
-
-        self.emb = nn.Embedding(self.num_embs, dim)
-    
-    def to_idx(self, edge):
-        outward = edge[:,0]
-        x_shift = edge[:,1]
-        y_shift = edge[:,2]
-        return 2 * (
-            (x_shift + self.max_x_shift) * self.num_x_shifts + 
-            (y_shift + self.max_y_shift)
-        ) + outward
-    
-    def forward(self, x):
         return self.emb(self.to_idx(x))
+
+class BrickChoiceAgent(nn.Module):
+    def __init__(self, dim, num_bricks):
+        super().__init__()
     
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, 4 * dim),
+            nn.SiLU(),
+            nn.Linear(4 * dim, dim)
+        )
+
+        #TODO: could replace this with RNN
+        self.graph_agg = lambda node_repr, batch: gnn.global_mean_pool(node_repr, batch)
+
+        self.proj = nn.Linear(dim, num_bricks)
     
-def add_voxel_repr(node_repr, voxels_repr):
-    raise NotImplementedError()
+    def forward(self, node_repr: Float[Tensor, "N d"], batch: Int[Tensor, "N"]) -> Int[Tensor, "B brick"]:
+        node_repr = self.ffn(node_repr)
+        graph_repr = self.graph_agg(node_repr, batch)
+
+        logits = self.proj(graph_repr)
+
+        return logits
+    
+class NodeChoiceAgent(nn.Module):
+    """inspired by: https://docs.dgl.ai/en/0.8.x/tutorials/models/3_generative_model/5_dgmg.html#action-3-choose-a-destination"""
+    def __init__(self, dim):
+        super().__init__()
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, 4 * dim),
+            nn.SiLU(),
+            nn.Linear(4 * dim, dim)
+        )
+
+        self.proj = nn.Linear(2 * dim, 1)
+    
+    def forward(self, 
+        node_repr: Float[Tensor, "N d"], 
+        brick_emb: Float[Tensor, "d"],
+    ) -> Float[Tensor, "N"]:
+        node_repr = self.ffn(node_repr)
+
+        node_brick_repr = torch.cat([node_repr, brick_emb], dim=1)
+
+        logits = self.proj(node_brick_repr)
+
+        return logits
+
+class EdgeChoiceAgent(nn.Module):
+    def __init__(self, dim, num_edge_attrs):
+        super().__init__()
+        self.ffn = nn.Sequential(
+            nn.Linear(2 * dim, 4 * dim),
+            nn.SiLU(),
+            nn.Linear(4 * dim, dim),
+            nn.SiLU(),
+            
+        )
+
+        self.proj = nn.Linear(dim, num_edge_attrs)
+
+    def forward(self, node_repr, brick_repr):
+        x = torch.cat([node_repr, brick_repr], dim=1)
+        x = self.ffn(x)
+
+        logits = self.proj(x)
+
+        return logits
+
     
 class LegoNet(pl.LightningModule):
     """
@@ -150,10 +217,10 @@ class LegoNet(pl.LightningModule):
         self.g = g
 
         # represent the brick as a high-dimensional vector
-        self.brick_repr = BrickEmbed(num_bricks, dim)
+        self.brick_embed = BrickEmbed(num_bricks, dim)
 
         # purpose is to transform graph x, pos, and edge_attr into vectors of consistent dimension
-        self.graph_embed = GraphEmbed(dim, self.brick_repr)
+        self.graph_embed = GraphEmbed(dim, self.brick_embed, max_x_shift=3, max_y_shift=3)
 
         # purpose is to process the graph input, and obtain vector representations of each node
         self.node_repr = GraphNet(dim)
@@ -168,25 +235,9 @@ class LegoNet(pl.LightningModule):
             nn.Linear(4 * dim, dim)
         )
 
-        
-        self.brick_choice = nn.Sequential(
-            nn.Linear(dim, 4 * dim),
-            nn.SiLU(),
-            nn.Linear(4 * dim, dim)
-        ) 
-        self.brick_choice_linear = nn.Linear(dim, num_bricks)
-        self.edge_node_choice_feat = nn.Sequential(
-            nn.Linear(dim, 4 * dim),
-            nn.SiLU(),
-            nn.Linear(4 * dim, dim)
-        )
-
-        self.edge_embed = EdgeIdx(3, 3, dim)
-        self.edge_ff = nn.Sequential(
-            nn.Linear(dim, 4 * dim),
-            nn.SiLU(),
-            nn.Linear(4 * dim, self.edge_embed.num_embs)
-        )
+        self.brick_choice_agent = BrickChoiceAgent(dim, num_bricks)
+        self.node_choice_agent = NodeChoiceAgent(dim)
+        self.edge_choice_agent = EdgeChoiceAgent(dim, self.graph_embed.num_edge_embeddings)
 
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -211,34 +262,30 @@ class LegoNet(pl.LightningModule):
         voxels_node_repr = self.voxel_node_repr(voxel_node_combined)
 
         # select brick (node)
-        brick_choice_repr = self.brick_choice(voxels_node_repr)
-        graph_feat = gnn.global_mean_pool(brick_choice_repr, batch.batch) #NOTE: I don't think this is a great choice here; replace with RNN
-        brick_logits = self.brick_choice_linear(graph_feat)
+        brick_logits = self.brick_choice_agent(voxels_node_repr, batch.batch)
 
         true_brick = batch.y[:,:2]
-        brick_loss = F.cross_entropy(brick_logits, BrickEmbed.to_idx(true_brick))
-
-
+        brick_loss = F.cross_entropy(brick_logits, self.brick_embed.to_idx(true_brick))
 
         # select node to be connected to
         true_brick_node = true_brick[batch.batch]
-        brick_emb = self.brick_repr(true_brick_node) # using true brick
-        edge_node_feats = self.edge_node_choice_feat(voxels_node_repr)
-        sim = einsum(edge_node_feats, brick_emb, 'n f,n f -> n')
+        true_brick_emb = self.brick_embed(true_brick_node) # using true brick
+        edge_node_logits = self.node_choice_agent(voxels_node_repr, true_brick_emb)
 
         edge_node_loss = 0
         true_node_idxs = batch.y[:,2]
 
         for i in range(len(batch.y)):
-            edge_node_logits = sim[batch.batch == i]
-            edge_node_loss += F.cross_entropy(edge_node_logits, true_node_idxs[i])
-
-        # edge_node_loss = F.cross_entropy(edge_node_logits, batch.y[:,2])
+            graph_edge_node_logits = edge_node_logits[batch.batch == i].reshape(-1)
+            edge_node_loss += F.cross_entropy(graph_edge_node_logits, true_node_idxs[i])
+        
+        edge_node_loss /= len(batch.y)
 
         # select attributes of edge
         true_node_repr = voxels_node_repr[true_node_idxs]
-        edge_attr_logits = self.edge_ff(true_node_repr)
-        true_edge_idx = self.edge_embed.to_idx(batch.y[:,3:])
+        edge_attr_logits = self.edge_choice_agent(true_node_repr, self.brick_embed(true_brick))
+        
+        true_edge_idx = self.graph_embed.edge_ids(batch.y[:,4:], outward = batch.y[:,3])
         edge_attr_loss = F.cross_entropy(edge_attr_logits, true_edge_idx)
     
         loss = brick_loss + self.l * edge_node_loss + self.g * edge_attr_loss

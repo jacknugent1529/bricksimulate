@@ -5,7 +5,7 @@ import lightning.pytorch as pl
 from argparse import ArgumentParser
 
 trainer_callbacks = [
-    ModelSummary(max_depth=4),
+    ModelSummary(max_depth=2),
     ModelCheckpoint(
         save_top_k=2,
         monitor='val/acc',

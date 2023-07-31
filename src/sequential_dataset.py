@@ -226,6 +226,36 @@ MAX_VOXEL = 25
 class SequentialLegoData(InMemoryDataset):
     """
     When first run, this class will create a processed version of the dataset. If changes are made to the data and we want to re-run it, you can delete the `data/processed` folder.
+
+    Data is in the following format:
+    Define N to be the number of nodes, B to be the batch size (number of lego models), M to be the number of edges
+
+    batch.x: N x 2 (node features)
+    - brick id
+    - brick rotation (0 or 90 degrees)
+
+    batch.pos: N x 6 (node positions)
+    - x,y,z,x,y,z - bounding box corners
+
+    batch.edge_attr: M x 2 (edge features)
+    - x_shift, y_shift
+
+    batch.complete_voxels: B x 25 x 25 x 25
+
+    batch.edge_index
+    - graph connectivity
+
+    batch.y: B x 6
+    - brick id
+    - brick rotation
+    - node connection id
+    - edge outward (1 or 0)
+    - edge x_shift
+    - edge y_shift
+
+    batch.batch: N
+    - index of graph node belongs to (between 0 and B)
+    
     """
     def __init__(self, root):
         super().__init__(root)
