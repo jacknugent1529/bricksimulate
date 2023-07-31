@@ -52,3 +52,7 @@ For example
     # call the to_voxels LegoModel function on the Data object
     LegoModel.to_voxels(model, 1)
 ```
+
+
+# notes
+- any normalization needed?

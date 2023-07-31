@@ -9,11 +9,12 @@ from math import ceil
 from torch_geometric.data import InMemoryDataset
 from typing import Union
 import os
+from tqdm import tqdm
 
 # always have x1 < x2, y1 < y2, z1 < z2
-PrismArr = Float[Tensor, "b x1 y1 z1 x2 y2 z2"]
-Prism = Float[Tensor, "x1 y1 z1 x2 y2 z2"]
-Point = Float[Tensor, "x y z"]
+PrismArr = Float[Tensor, "b xyz_xyz"]
+Prism = Float[Tensor, "xyz_xyz"]
+Point = Float[Tensor, "xyz"]
 
 def check_collision_point(p: Point, prisms: PrismArr) -> Bool[Tensor, "b"]:
     x_collide = (prisms[:,0] <= p[0]) & (prisms[:,3] >= p[0])
@@ -22,14 +23,15 @@ def check_collision_point(p: Point, prisms: PrismArr) -> Bool[Tensor, "b"]:
 
     return x_collide & y_collide & z_collide
 
+eps = 1e-6
 def check_intersection(prism: Prism, other_prisms: PrismArr) -> Bool[Tensor, "b"]:
-    x_collide = (prism[0] < other_prisms[:,3]) & (prism[3] > other_prisms[:,0])
-    y_collide = (prism[1] < other_prisms[:,4]) & (prism[4] > other_prisms[:,1])
-    z_collide = (prism[2] < other_prisms[:,5]) & (prism[5] > other_prisms[:,2])
+    x_collide = (prism[0] + eps < other_prisms[:,3]) & (prism[3] - eps > other_prisms[:,0])
+    y_collide = (prism[1] + eps < other_prisms[:,4]) & (prism[4] - eps > other_prisms[:,1])
+    z_collide = (prism[2] + eps < other_prisms[:,5]) & (prism[5] - eps > other_prisms[:,2])
 
     return x_collide & y_collide & z_collide
 
-def prism_center(prisms: PrismArr) -> Float[Tensor, "b x y z"]:
+def prism_center(prisms: PrismArr) -> Float[Tensor, "b xyz"]:
     x = (prisms[:,3] + prisms[:,0]) / 2
     y = (prisms[:,4] + prisms[:,1]) / 2
     z = (prisms[:,5] + prisms[:,2]) / 2
@@ -38,7 +40,10 @@ def prism_center(prisms: PrismArr) -> Float[Tensor, "b x y z"]:
 
 def dfs_bidirectional_preorder(g: Data, return_graph = False) -> list:
     g_nx = nx.DiGraph(g.edge_index.T.to(int).tolist())
-    order = list(nx.dfs_preorder_nodes(g_nx.to_undirected()))
+    if len(g.edge_index) == 0:
+        order = [i for i in range(len(g.x))]
+    else:
+        order = list(nx.dfs_preorder_nodes(g_nx.to_undirected()))
     if return_graph:
         return order, g_nx
     return order
@@ -55,9 +60,10 @@ class LegoBrick():
         if self.brick_id != 0:
             raise ValueError("Only 2x4 bricks currently supported")
         if self.rot == 0:
-            return torch.Tensor([0,0,0,2,4,1.215])
+            #TODO: figure out bug with changing z height
+            return torch.Tensor([0,0,0,2,4,1])
         elif abs(self.rot) == 90:
-            return torch.Tensor([0,0,0,4,2,1.215])
+            return torch.Tensor([0,0,0,4,2,1])
         else:
             raise ValueError("Only 90 degree rotations supported")
     
@@ -77,7 +83,9 @@ class LegoBrick():
         
         # if intersect, move up
         if check_intersection(self.prism, other.prism.unsqueeze(0)).item():
-            z_shift = 1 if top else -1
+            z_shift = other.prism[5] - other.prism[2]
+            if not top:
+                z_shift *= -1
             self.prism[[2,5]] += z_shift
         
         if self.placed and not torch.isclose(self.prism, prism_orig).all():
@@ -116,6 +124,8 @@ class LegoModel(Data):
                 X.append([0, 0])
             elif node == 'Brick(4, 2)':
                 X.append([0, 90])
+            else:
+                assert False, "invalid brick"
         
         X = torch.Tensor(X).to(int)
         
@@ -128,7 +138,7 @@ class LegoModel(Data):
         edge_index = torch.Tensor(edge_index).T
         edge_attr = torch.Tensor(edge_attr)
 
-        model = Data(x = X, edge_index=edge_index, edge_attr=edge_attr)
+        model = Data(x = X, edge_index=edge_index.to(int), edge_attr=edge_attr)
         model.pos = LegoModel.get_prisms(model)
 
         return model
@@ -168,6 +178,8 @@ class LegoModel(Data):
         return voxels
         
     def get_prisms(self) -> PrismArr:
+        if len(self.x) == 0:
+            return torch.Tensor([])
         edge_features = {(int(k[0]), int(k[1])):v for k,v in zip(self.edge_index.T, self.edge_attr)}
         
         # topo sort
@@ -196,7 +208,11 @@ class LegoModel(Data):
 
             bricks[node] = brick
 
-        prisms = torch.stack([b.prism for b in bricks.values()])
+        prism_list = []
+        for i in range(len(self.x)):
+            prism_list.append(bricks[i].prism)
+
+        prisms = torch.stack(prism_list)
 
         return prisms
     
@@ -244,4 +260,3 @@ class LegoData(InMemoryDataset):
                 continue
         data, slices = self.collate(data_list)
         torch.save((data, slices), self.processed_paths[0])
-
