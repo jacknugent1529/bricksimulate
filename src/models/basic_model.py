@@ -1,5 +1,6 @@
-from typing import Any
+from typing import Any, Optional
 import lightning.pytorch as pl
+from lightning.pytorch.utilities.types import STEP_OUTPUT
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -7,9 +8,11 @@ import torch_geometric.nn as gnn
 from torch import Tensor
 from torch.nested import nested_tensor
 from einops import rearrange, einsum
-from ..sequential_dataset import Node, Edge
 from jaxtyping import Float, Int
-
+from ..lego_model import LegoModel
+from ..data_types import brick, buildstep, Brick, Edge, BuildStep, edge
+import torchmetrics
+from .model_abc import AbstractGenerativeModel
 
 class VoxelNet(nn.Module):
     def __init__(self, out_dim, activation = F.silu):
@@ -93,20 +96,30 @@ class GraphEmbed(nn.Module):
     def num_edge_embeddings_undirected(self):
         return (2 * self.max_x_shift + 1) * (2 * self.max_y_shift + 1)
     
-    def edge_ids(self, edge_attr, outward=None):
-        x_shift = edge_attr[:,0]
-        y_shift = edge_attr[:,1]
+    def to_edge_ids(self, edge_attr: Edge, top=None):
+        x_shift = edge.x_shift(edge_attr)
+        y_shift = edge.y_shift(edge_attr)
         num_x_shifts = 2 * self.max_x_shift + 1
         idx = (
             (x_shift + self.max_x_shift) * num_x_shifts + 
             (y_shift + self.max_y_shift)
         )
-        if outward is not None:
-            idx = 2 * idx + outward
+        if top is not None:
+            idx = 2 * idx + top
         return idx.to(int)
     
-    def embed_edges(self, edge_attr):
-        return self.edge_emb(self.edge_ids(edge_attr))
+    def from_edge_ids(self, edge_id, include_top=True):
+        assert include_top, "not implemented"
+        top = edge_id % 2
+        edge_id = edge_id // 2
+        num_x_shifts = 2 * self.max_x_shift + 1
+        x_shift = (edge_id // num_x_shifts) - self.max_x_shift
+        y_shift = (edge_id % num_x_shifts) - self.max_y_shift
+
+        return top, x_shift, y_shift
+    
+    def embed_edges(self, edge_attr, top=None):
+        return torch.Tensor(self.edge_emb(self.to_edge_ids(edge_attr, top=top)))
 
     def forward(self, graph):
         x = self.brick_emb(graph.x) + self.pos_proj(graph.pos)
@@ -121,9 +134,19 @@ class BrickEmbed(nn.Module):
         super().__init__()
         self.num_bricks = num_bricks
         self.emb = nn.Embedding(num_bricks, dim)
+
+    def to_idx(self, x):
+        standard_idx = (1 + brick.rot(x) // 90).to(int)
+        return torch.where(brick.id(x) == -1, 0, standard_idx)
     
-    def to_idx(self, brick):
-        return brick[:,1] // 90
+    def from_idx(self, x):
+        rot = (x - 1) * 90
+        brick_id = torch.where(x == 0, -1, 0)
+        rot = torch.where(x == 0, 0, (x - 1) * 90)
+        return torch.cat((brick_id.reshape(-1,1), rot.reshape(-1,1)), dim=1)
+
+    def embed_idx(self, x):
+        return self.emb(x)
 
     def forward(self, x):
         return self.emb(self.to_idx(x))
@@ -197,7 +220,7 @@ class EdgeChoiceAgent(nn.Module):
         return logits
 
     
-class LegoNet(pl.LightningModule):
+class LegoNet(pl.LightningModule, AbstractGenerativeModel):
     """
     LegoNet basic model
     1. Obtain voxels representation using VoxelNet
@@ -239,6 +262,12 @@ class LegoNet(pl.LightningModule):
         self.node_choice_agent = NodeChoiceAgent(dim)
         self.edge_choice_agent = EdgeChoiceAgent(dim, self.graph_embed.num_edge_embeddings)
 
+        self.val_metrics = {
+            'brick': torchmetrics.Accuracy('multiclass', num_classes=num_bricks, average='macro'),
+            'edge_node': torchmetrics.Accuracy('multiclass', average='micro', num_classes=1_000),
+            'edge_attr': torchmetrics.Accuracy('multiclass', average='macro', num_classes=self.graph_embed.num_edge_embeddings)
+        }
+
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = parent_parser.add_argument_group("LegoNet")
@@ -246,9 +275,8 @@ class LegoNet(pl.LightningModule):
         parser.add_argument("--l", type=int, default=1)
         parser.add_argument("--g", type=int, default=1)
         return parent_parser
-
-    def training_step(self, batch):
-        #TODO: think about when to move data to gpu
+    
+    def process_graph(self, batch):
         voxels_repr = self.voxel_repr(batch.complete_voxels.unsqueeze(1))
 
         x, edge_attr = self.graph_embed(batch)
@@ -261,44 +289,103 @@ class LegoNet(pl.LightningModule):
         voxel_node_combined = torch.cat((graph_node_repr, voxel_model), dim=1)
         voxels_node_repr = self.voxel_node_repr(voxel_node_combined)
 
+        return voxels_node_repr
+
+
+    def step(self, batch, prefix='train', metrics=None):
+        voxels_node_repr = self.process_graph(batch)
+
         # select brick (node)
         brick_logits = self.brick_choice_agent(voxels_node_repr, batch.batch)
 
-        true_brick = batch.y[:,:2]
-        brick_loss = F.cross_entropy(brick_logits, self.brick_embed.to_idx(true_brick))
+        true_brick = buildstep.brick(batch.y)
+        true_brick_idx = self.brick_embed.to_idx(true_brick).to(int)
+        brick_loss = F.cross_entropy(brick_logits, true_brick_idx)
+        if metrics is not None:
+            metrics['brick'].update(brick_logits, true_brick_idx)
 
         # select node to be connected to
         true_brick_node = true_brick[batch.batch]
-        true_brick_emb = self.brick_embed(true_brick_node) # using true brick
+        true_brick_emb = self.brick_embed(true_brick_node.to(int)) # using true brick
         edge_node_logits = self.node_choice_agent(voxels_node_repr, true_brick_emb)
 
         edge_node_loss = 0
-        true_node_idxs = batch.y[:,2]
+        true_node_idxs = buildstep.node_idx(batch.y)
 
-        for i in range(len(batch.y)):
+        B = len(batch.y)
+        for i in range(B):
             graph_edge_node_logits = edge_node_logits[batch.batch == i].reshape(-1)
             edge_node_loss += F.cross_entropy(graph_edge_node_logits, true_node_idxs[i])
+
+            if metrics is not None:
+                metrics['edge_node'].update(graph_edge_node_logits.unsqueeze(0).argmax(dim=-1), true_node_idxs[i].unsqueeze(0))
+            
         
-        edge_node_loss /= len(batch.y)
+        edge_node_loss /= B
 
         # select attributes of edge
-        true_node_repr = voxels_node_repr[true_node_idxs]
-        edge_attr_logits = self.edge_choice_agent(true_node_repr, self.brick_embed(true_brick))
+        true_node_repr = torch.stack([voxels_node_repr[batch.batch == i][true_node_idxs[i]] for i in range(B)])
+        edge_attr_logits = self.edge_choice_agent(true_node_repr, self.brick_embed(true_brick.to(int)))
         
-        true_edge_idx = self.graph_embed.edge_ids(batch.y[:,4:], outward = batch.y[:,3])
+        true_edge_idx = self.graph_embed.to_edge_ids(buildstep.edge(batch.y), top = buildstep.top(batch.y))
         edge_attr_loss = F.cross_entropy(edge_attr_logits, true_edge_idx)
+        if metrics is not None:
+            metrics['edge_attr'].update(edge_attr_logits, true_edge_idx)
     
         loss = brick_loss + self.l * edge_node_loss + self.g * edge_attr_loss
 
         self.log_dict({
-            'train/brick_loss': brick_loss,
-            'train/edge_node_loss': edge_node_loss,
-            'train/edge_attr_loss': edge_attr_loss,
-        })
+            f'{prefix}/brick_loss': brick_loss,
+            f'{prefix}/edge_node_loss': edge_node_loss,
+            f'{prefix}/edge_attr_loss': edge_attr_loss,
+        }, batch_size=B)
 
-        self.log_dict({'train/loss': loss,}, prog_bar=True)
+        self.log_dict({f'{prefix}/loss': loss,}, prog_bar=prefix == 'val', batch_size=B)
 
         return loss
+    
+    def training_step(self, batch, batch_idx):
+        return self.step(batch, 'train')
+    
+    def validation_step(self, batch, batch_idx):
+        B = len(batch.y)
+        self.step(batch, 'val', self.val_metrics)
+
+        for k,v in self.val_metrics.items():
+            self.log(f'val/{k}_acc', v.compute(), batch_size=B)
+    
+    
+    def gen_brick(self, graph):
+        assert graph.num_graphs == 1
+        voxels_node_repr = self.process_graph(graph)
+
+        # select brick (node)
+        brick_logits = self.brick_choice_agent(voxels_node_repr, graph.batch)
+        print("brick dist: ", F.softmax(brick_logits))
+        brick_idx = torch.argmax(brick_logits, dim=-1)
+
+        # select node to be connected to
+        true_brick_node = brick_idx[graph.batch]
+        true_brick_emb = self.brick_embed.embed_idx(true_brick_node.to(int)) # using true brick
+        edge_node_logits = self.node_choice_agent(voxels_node_repr, true_brick_emb)
+
+        edge_node_idx = torch.argmax(edge_node_logits).unsqueeze(0)
+
+        # select attributes of edge
+        true_node_repr = voxels_node_repr[edge_node_idx]
+        edge_attr_logits = self.edge_choice_agent(true_node_repr, self.brick_embed.embed_idx(brick_idx))
+        print("edge_attr dist: ", F.softmax(edge_attr_logits))
+
+        edge_attr_idx = torch.argmax(edge_attr_logits)
+        print("edge idx:", edge_attr_idx, "max:", edge_attr_logits.max())
+
+        new_brick = self.brick_embed.from_idx(brick_idx)[0]
+        top, x_shift, y_shift = self.graph_embed.from_edge_ids(edge_attr_idx, True)
+
+        step = buildstep.new(new_brick, edge.new(x_shift, y_shift), edge_node_idx, top)
+        print(buildstep.to_str(step))
+        return step
+
     
     def configure_optimizers(self) -> Any:
         return torch.optim.AdamW(self.parameters())

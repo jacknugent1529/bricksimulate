@@ -1,4 +1,4 @@
-from .sequential_dataset import SeqDataModule
+from .sequential_dataset import SeqDataModule, MyToUndirected
 from .models.basic_model import LegoNet
 from lightning.pytorch.callbacks import ModelSummary, ModelCheckpoint
 import lightning.pytorch as pl
@@ -8,15 +8,16 @@ trainer_callbacks = [
     ModelSummary(max_depth=2),
     ModelCheckpoint(
         save_top_k=2,
-        monitor='val/acc',
-        mode='max',
+        monitor='val/loss',
+        mode='min',
         save_last=True,
     ),
 ]
 
 def run(args):
-    data = SeqDataModule(args.data_folder, args.batch_size, args.num_workers)
-    model = LegoNet(args.dim, 2, args.l, args.g)
+    data = SeqDataModule(args.data_folder, args.batch_size, args.num_workers, transform=MyToUndirected('mean'))
+    num_bricks = 3 # 2 rotations + STOP brick
+    model = LegoNet(args.dim, num_bricks, args.l, args.g)
 
     trainer = pl.Trainer(max_epochs=args.epochs, check_val_every_n_epoch=1, fast_dev_run=args.fast_dev_run, callbacks=trainer_callbacks)
 

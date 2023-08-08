@@ -1,3 +1,4 @@
+#NOTE: OUTDATED; DON'T USE THIS; just keeping around for comparisons
 from torch.utils.data import Dataset
 import pickle
 from torch_geometric.data import Data
@@ -7,9 +8,21 @@ import torch
 import networkx as nx
 from math import ceil
 from torch_geometric.data import InMemoryDataset
-from typing import Union
+from typing import Union, NamedTuple
 import os
 from tqdm import tqdm
+
+BRICK_ID = 0
+
+class Node(NamedTuple):
+    brick_id: int
+    rot: float
+
+class Edge(NamedTuple):
+    node: int
+    top: bool # is the brick being placed on top of "node"
+    x_shift: int
+    y_shift: int
 
 # always have x1 < x2, y1 < y2, z1 < z2
 PrismArr = Float[Tensor, "b xyz_xyz"]
@@ -226,6 +239,55 @@ class LegoModel(Data):
                 return False
 
         return True
+    
+    def add_piece(self, node: Node, edge: Edge):
+        brick = LegoBrick(0, node.rot)
+        other_attr = self.x[edge.node]
+        other_brick = LegoBrick(0, other_attr[1])
+
+        model_prisms = self.pos
+        other_brick.prism = model_prisms[edge.node]
+
+        brick.place_on(other_brick, edge.x_shift, edge.y_shift, edge.top)
+
+        prism = brick.prism
+        large_prism = prism.clone()
+        large_prism[2] -= 0.1
+        large_prism[5] += 0.1
+
+        small_prism = prism.clone()
+        small_prism[:3] += 0.05
+        small_prism[3:] -= 0.05
+
+        bad_intersections = check_intersection(small_prism, model_prisms)
+        if bad_intersections.sum() > 0:
+            idx = torch.argwhere(bad_intersections)[0]
+            raise ValueError(f"brick placement {prism} intersects with {model_prisms[idx]}")
+
+
+        intersections = check_intersection(large_prism, model_prisms)
+
+        assert intersections.sum() > 0, "no connections"
+
+        # update nodes in graph
+        new_x = torch.Tensor([BRICK_ID, node.rot]) 
+        new_pos = brick.prism
+        self.x = torch.cat([self.x, new_x[None,:]])
+        self.pos = torch.cat([self.pos, new_pos[None,:]])
+        
+        # update edges in graph
+        for node_idx in torch.argwhere(intersections):
+            x_shift, y_shift, z_shift = (prism_center(prism[None,:]) - prism_center(model_prisms[node_idx]))[0]
+
+            new_edge_attr = torch.Tensor([x_shift, y_shift])
+            new_brick_idx = len(self.x)
+            if z_shift > 0:
+                new_edge_index = torch.Tensor([node_idx, new_brick_idx])[:,None]
+            else:
+                new_edge_index = torch.Tensor([new_brick_idx, node_idx])[:,None]
+
+            self.edge_attr = torch.cat([self.edge_attr, new_edge_attr[None,:]])
+            self.edge_index = torch.cat([self.edge_index, new_edge_index], dim=1)
 
 # taken from here: https://pytorch-geometric.readthedocs.io/en/latest/tutorial/create_dataset.html
 class LegoData(InMemoryDataset):
