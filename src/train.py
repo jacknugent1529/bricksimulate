@@ -15,11 +15,17 @@ trainer_callbacks = [
 ]
 
 def run(args):
-    data = SeqDataModule(args.data_folder, args.batch_size, args.num_workers, transform=MyToUndirected('mean'))
+    data = SeqDataModule(args.data_folder, args.batch_size, args.num_workers, transform=MyToUndirected('mean'), include_gen_step=True)
     num_bricks = 3 # 2 rotations + STOP brick
     model = LegoNet(args.dim, num_bricks, args.l, args.g)
 
-    trainer = pl.Trainer(max_epochs=args.epochs, check_val_every_n_epoch=1, fast_dev_run=args.fast_dev_run, callbacks=trainer_callbacks)
+    trainer = pl.Trainer(
+        max_epochs=args.epochs, 
+        check_val_every_n_epoch=args.check_val_every_n_epoch,
+        fast_dev_run=args.fast_dev_run, 
+        # precision=16,
+        callbacks=trainer_callbacks, 
+    )
 
     trainer.fit(model=model, datamodule=data)
 
@@ -34,6 +40,7 @@ def main():
     # training
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--fast-dev-run", action="store_true")
+    parser.add_argument("--check-val-every-n-epoch", type=int, default=1)
 
 
     parser = LegoNet.add_model_specific_args(parser)

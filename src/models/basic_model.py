@@ -12,7 +12,7 @@ from jaxtyping import Float, Int
 from ..lego_model import LegoModel
 from ..data_types import brick, buildstep, Brick, Edge, BuildStep, edge
 import torchmetrics
-from .model_abc import AbstractGenerativeModel
+from .generative_model import AbstractGenerativeModel
 
 class VoxelNet(nn.Module):
     def __init__(self, out_dim, activation = F.silu):
@@ -312,7 +312,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         edge_node_loss = 0
         true_node_idxs = buildstep.node_idx(batch.y)
 
-        B = len(batch.y)
+        B = batch.num_graphs
         for i in range(B):
             graph_edge_node_logits = edge_node_logits[batch.batch == i].reshape(-1)
             edge_node_loss += F.cross_entropy(graph_edge_node_logits, true_node_idxs[i])
@@ -340,28 +340,48 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
             f'{prefix}/edge_attr_loss': edge_attr_loss,
         }, batch_size=B)
 
-        self.log_dict({f'{prefix}/loss': loss,}, prog_bar=prefix == 'val', batch_size=B)
+        self.log_dict({f'{prefix}/loss': loss,}, prog_bar=prefix == 'val', batch_size=B, add_dataloader_idx=False)
 
         return loss
     
     def training_step(self, batch, batch_idx):
         return self.step(batch, 'train')
     
-    def validation_step(self, batch, batch_idx):
-        B = len(batch.y)
-        self.step(batch, 'val', self.val_metrics)
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
 
-        for k,v in self.val_metrics.items():
-            self.log(f'val/{k}_acc', v.compute(), batch_size=B)
+        if dataloader_idx == 0:
+            B = batch.num_graphs
+            self.step(batch, 'val', self.val_metrics)
+
+            for k,v in self.val_metrics.items():
+                self.log(f'val/{k}_acc', v.compute(), batch_size=B)
+        else:
+            # test full generation
+            self.gen_step(batch, batch_idx, prefix='gen')
+    
+    def gen_step(self, batch, batch_idx, prefix):
+        pred_step = self.gen_brick(batch)
+        step = batch.y[0]
+        
+        brick_correct = (buildstep.brick(pred_step) == buildstep.brick(step)).all()
+        node_correct = (buildstep.node_idx(pred_step) == buildstep.node_idx(step)).item()
+        edge_correct = (buildstep.edge(pred_step) == buildstep.edge(step)).all() and (buildstep.top(pred_step) == buildstep.top(step)).item()
+
+        self.log(f'{prefix}/brick_acc', float(brick_correct), batch_size=1, on_epoch=True)
+        self.log(f'{prefix}/edge_node_acc', float(node_correct), batch_size=1, on_epoch=True)
+        self.log(f'{prefix}/edge_attr_acc', float(edge_correct), batch_size=1, on_epoch=True)
     
     
+    #TODO: improve
+    # - randomly sample from distributions instead of argmax
+    # - add a temperature parameter
+    # - allow prediction on multiple graphs at once (primarily for testing purposes, not generation)
     def gen_brick(self, graph):
         assert graph.num_graphs == 1
         voxels_node_repr = self.process_graph(graph)
 
         # select brick (node)
         brick_logits = self.brick_choice_agent(voxels_node_repr, graph.batch)
-        print("brick dist: ", F.softmax(brick_logits))
         brick_idx = torch.argmax(brick_logits, dim=-1)
 
         # select node to be connected to
@@ -374,16 +394,13 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         # select attributes of edge
         true_node_repr = voxels_node_repr[edge_node_idx]
         edge_attr_logits = self.edge_choice_agent(true_node_repr, self.brick_embed.embed_idx(brick_idx))
-        print("edge_attr dist: ", F.softmax(edge_attr_logits))
 
         edge_attr_idx = torch.argmax(edge_attr_logits)
-        print("edge idx:", edge_attr_idx, "max:", edge_attr_logits.max())
 
         new_brick = self.brick_embed.from_idx(brick_idx)[0]
         top, x_shift, y_shift = self.graph_embed.from_edge_ids(edge_attr_idx, True)
 
         step = buildstep.new(new_brick, edge.new(x_shift, y_shift), edge_node_idx, top)
-        print(buildstep.to_str(step))
         return step
 
     

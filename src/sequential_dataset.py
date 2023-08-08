@@ -30,7 +30,7 @@ class MyToUndirected(BaseTransform):
         return data
 
 class SeqDataModule(pl.LightningDataModule):
-    def __init__(self, datafolder, B, num_workers, transform=None):
+    def __init__(self, datafolder, B, num_workers, include_gen_step=False, transform=None):
         super().__init__()
 
         self.save_hyperparameters()
@@ -39,17 +39,30 @@ class SeqDataModule(pl.LightningDataModule):
         self.B = B
         self.num_workers = num_workers
         self.transform = transform
+        self.include_gen_step = include_gen_step
     
     def prepare_data(self) -> None:
         self.data = SequentialLegoData(self.datafolder, transform=self.transform)
 
-        self.train_ds, self.val_ds = random_split(self.data, [0.8,0.2])
+        if self.include_gen_step:
+            L = len(self.data)
+            L_gen = min(500, int(0.1 * L))
+            L_train = int(0.8*L)
+            L_val = L - (L_gen + L_train)
+            self.train_ds, self.val_ds, self.gen_ds = random_split(self.data, [L_train, L_val, L_gen])
+        else:
+            self.train_ds, self.val_ds = random_split(self.data, [0.8,0.2])
     
     def train_dataloader(self):
         return DataLoader(self.train_ds, self.B, shuffle=True, num_workers=self.num_workers)
     
     def val_dataloader(self):
-        return DataLoader(self.train_ds, self.B, shuffle=False, num_workers=self.num_workers)
+        val = DataLoader(self.val_ds, self.B, shuffle=False, num_workers=self.num_workers)
+        if self.include_gen_step:
+            gen = DataLoader(self.gen_ds, 1, shuffle=False, num_workers = self.num_workers)
+            return val, gen
+        return val
+
 
 
 def create_build_gif(steps: list[LegoModel], filename: str):
