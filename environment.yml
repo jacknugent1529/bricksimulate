@@ -1,0 +1,21 @@
+name: lego_test
+channels:
+  - pytorch
+  - conda-forge
+  - pyg
+dependencies:
+  - python=3.10
+  - pytorch
+  - lightning
+  - numpy
+  - jupyterlab
+  - jaxtyping
+  - ca-certificates
+  - openssl
+  - certifi
+  - pyg
+  - imageio
+  - einops
+  - tensorboardx
+  - matplotlib
+prefix: /Users/jacknugent/mambaforge/envs/lego
