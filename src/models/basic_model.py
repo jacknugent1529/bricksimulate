@@ -6,10 +6,8 @@ from torch import nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn
 from torch import Tensor
-from torch.nested import nested_tensor
 from einops import rearrange, einsum
 from jaxtyping import Float, Int
-from ..lego_model import LegoModel
 from ..data_types import brick, buildstep, Brick, Edge, BuildStep, edge
 import torchmetrics
 from .generative_model import AbstractGenerativeModel
@@ -61,7 +59,7 @@ class GraphNet(nn.Module):
             gnn.GINEConv(get_mlp()),
         ])
 
-    def forward(self, x, edge_index, edge_attr):
+    def forward(self, x: Float[Tensor, "N dim"], edge_index: Int[Tensor, "2 M"], edge_attr: Float[Tensor, "M dim"]):
         for conv in self.convs:
             x = conv(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
@@ -167,10 +165,10 @@ class BrickChoiceAgent(nn.Module):
         self.proj = nn.Linear(dim, num_bricks)
     
     def forward(self, node_repr: Float[Tensor, "N d"], batch: Int[Tensor, "N"]) -> Int[Tensor, "B brick"]:
-        node_repr = self.ffn(node_repr)
-        graph_repr = self.graph_agg(node_repr, batch)
+        node_repr: Float[Tensor, "N d"] = self.ffn(node_repr)
+        graph_repr: Float[Tensor, "b d"] = self.graph_agg(node_repr, batch)
 
-        logits = self.proj(graph_repr)
+        logits: Float[Tensor, "b num_bricks"] = self.proj(graph_repr) 
 
         return logits
     
@@ -190,11 +188,12 @@ class NodeChoiceAgent(nn.Module):
         node_repr: Float[Tensor, "N d"], 
         brick_emb: Float[Tensor, "d"],
     ) -> Float[Tensor, "N"]:
-        node_repr = self.ffn(node_repr)
+        node_repr: Float[Tensor, "N d"] = self.ffn(node_repr)
 
-        node_brick_repr = torch.cat([node_repr, brick_emb], dim=1)
+        #TODO: Experiment with order
+        node_brick_repr: Float[Tensor, "N d"] = torch.cat([node_repr, brick_emb], dim=1)
 
-        logits = self.proj(node_brick_repr)
+        logits: Float[Tensor, "N 1"] = self.proj(node_brick_repr)
 
         return logits
 
@@ -271,17 +270,17 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = parent_parser.add_argument_group("LegoNet")
-        parser.add_argument("--dim", type=int, default=128)
-        parser.add_argument("--l", type=int, default=1)
-        parser.add_argument("--g", type=int, default=1)
+        parser.add_argument("--dim", type=int, default=128, help='dimension of hidden vectors')
+        parser.add_argument("--l", type=int, default=1, help='hyperparameter multiplier for edge_node_loss')
+        parser.add_argument("--g", type=int, default=1, help='hyperparameter multiplier for edge_attr_loss')
         return parent_parser
     
     def process_graph(self, batch):
-        voxels_repr = self.voxel_repr(batch.complete_voxels.unsqueeze(1))
+        voxels_repr: Tensor["b dim"] = self.voxel_repr(batch.complete_voxels.unsqueeze(1))
 
         x, edge_attr = self.graph_embed(batch)
         edge_index = batch.edge_index
-        graph_node_repr = self.node_repr(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        graph_node_repr: Tensor["N dim"] = self.node_repr(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
 
         # concatenate appropriate voxels for model onto node representation
@@ -293,7 +292,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
 
 
     def step(self, batch, prefix='train', metrics=None):
-        voxels_node_repr = self.process_graph(batch)
+        voxels_node_repr: Float[Tensor, "N dim"] = self.process_graph(batch)
 
         # select brick (node)
         brick_logits = self.brick_choice_agent(voxels_node_repr, batch.batch)
@@ -319,8 +318,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
 
             if metrics is not None:
                 metrics['edge_node'].update(graph_edge_node_logits.unsqueeze(0).argmax(dim=-1), true_node_idxs[i].unsqueeze(0))
-            
-        
+
         edge_node_loss /= B
 
         # select attributes of edge
@@ -338,7 +336,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
             f'{prefix}/brick_loss': brick_loss,
             f'{prefix}/edge_node_loss': edge_node_loss,
             f'{prefix}/edge_attr_loss': edge_attr_loss,
-        }, batch_size=B)
+        }, batch_size=B, add_dataloader_idx=False)
 
         self.log_dict({f'{prefix}/loss': loss,}, prog_bar=prefix == 'val', batch_size=B, add_dataloader_idx=False)
 
@@ -354,7 +352,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
             self.step(batch, 'val', self.val_metrics)
 
             for k,v in self.val_metrics.items():
-                self.log(f'val/{k}_acc', v.compute(), batch_size=B)
+                self.log(f'val/{k}_acc', v.compute(), batch_size=B, add_dataloader_idx=False)
         else:
             # test full generation
             self.gen_step(batch, batch_idx, prefix='gen')
@@ -367,10 +365,12 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         node_correct = (buildstep.node_idx(pred_step) == buildstep.node_idx(step)).item()
         edge_correct = (buildstep.edge(pred_step) == buildstep.edge(step)).all() and (buildstep.top(pred_step) == buildstep.top(step)).item()
 
-        self.log(f'{prefix}/brick_acc', float(brick_correct), batch_size=1, on_epoch=True)
-        self.log(f'{prefix}/edge_node_acc', float(node_correct), batch_size=1, on_epoch=True)
-        self.log(f'{prefix}/edge_attr_acc', float(edge_correct), batch_size=1, on_epoch=True)
-    
+        self.log_dict({
+            f'{prefix}/brick_acc': float(brick_correct), 
+            f'{prefix}/edge_node_acc': float(node_correct),
+            f'{prefix}/edge_attr_acc': float(edge_correct),
+        }, batch_size=1, on_epoch=True, add_dataloader_idx=False)
+        
     
     #TODO: improve
     # - randomly sample from distributions instead of argmax
