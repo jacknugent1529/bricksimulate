@@ -18,4 +18,3 @@ dependencies:
   - einops
   - tensorboardx
   - matplotlib
-prefix: /Users/jacknugent/mambaforge/envs/lego
