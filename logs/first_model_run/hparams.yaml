@@ -1,0 +1,10 @@
+B: 128
+datafolder: data
+dim: 256
+g: 1
+include_gen_step: true
+l: 1
+num_bricks: 3
+num_workers: 3
+transform: !!python/object:src.sequential_dataset.MyToUndirected
+  reduce: mean
