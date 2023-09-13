@@ -201,6 +201,8 @@ class LegoModel(Data):
         intersections = utils.check_intersection(scaled, self.pos)
 
         for node_idx in torch.argwhere(intersections):
+            if node_idx == new_node_idx:
+                continue
             c1 = utils.prism_center(pos[None,:])[0]
             c2 = utils.prism_center(self.pos[node_idx])[0]
             x_shift, y_shift, z_shift = (c2 - c1)
@@ -209,6 +211,7 @@ class LegoModel(Data):
             if z_shift > 0:
                 new_edge_index = torch.Tensor([node_idx, new_node_idx])[:,None]
             else:
+                e *= -1
                 new_edge_index = torch.Tensor([new_node_idx, node_idx])[:,None]
 
             self.edge_attr = torch.cat([self.edge_attr, e[None,:]])

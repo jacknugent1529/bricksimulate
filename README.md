@@ -2,8 +2,13 @@
 
 ## Project Setup
 1. Make sure [git lfs](https://git-lfs.com/) is installed (run `git lfs install`). This will be used for dataset files.
-2. install necessary packages (TODO: create conda environment.yml)
+2. install necessary packages (use `conda env create -f environment.yml`)
 3. unzip `data.zip`
+4. delete `data/processed` folder
+5. Try running `python main.py --data-folder data -B 128 --dim 256 --epochs 10 --num-workers 3 --fast-dev-run`
+- will take a while the first time to process the data
+- to run a full training cycle (not just a test run), remove the `--fast-dev-run` flag
+
 
 
 ## Notes
