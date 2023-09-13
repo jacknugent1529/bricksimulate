@@ -13,6 +13,7 @@ import lightning.pytorch as pl
 from torch_geometric.loader import DataLoader
 from torch_geometric.transforms.base_transform import BaseTransform
 from torch_geometric.utils.undirected import to_undirected
+import numpy as np
 from .lego_model import LegoModel, BuildStep
 from .old_dataset import LegoModel as OldLegoModel
 
@@ -30,7 +31,7 @@ class MyToUndirected(BaseTransform):
         return data
 
 class SeqDataModule(pl.LightningDataModule):
-    def __init__(self, datafolder, B, num_workers, include_gen_step=False, transform=None):
+    def __init__(self, datafolder, B, num_workers, include_gen_step=False, transform=None, share_data=False):
         super().__init__()
 
         self.save_hyperparameters()
@@ -40,26 +41,42 @@ class SeqDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.transform = transform
         self.include_gen_step = include_gen_step
+        self.shared_datasets = share_data
     
     def prepare_data(self) -> None:
-        self.data = SequentialLegoData(self.datafolder, transform=self.transform)
+        data = SequentialLegoData(self.datafolder, "train", transform=self.transform)
+        data = SequentialLegoData(self.datafolder, "val", transform=self.transform)
+        data = SequentialLegoData(self.datafolder, "gen", transform=self.transform)
 
-        if self.include_gen_step:
-            L = len(self.data)
-            L_gen = min(500, int(0.1 * L))
-            L_train = int(0.8*L)
-            L_val = L - (L_gen + L_train)
-            self.train_ds, self.val_ds, self.gen_ds = random_split(self.data, [L_train, L_val, L_gen])
-        else:
-            self.train_ds, self.val_ds = random_split(self.data, [0.8,0.2])
+
+    # def setup(self, stage=None):
+    #     self.data = SequentialLegoData(self.datafolder, transform=self.transform)
+
+    #     if self.include_gen_step:
+    #         if self.shared_datasets:
+    #             self.train_ds = self.data
+    #             self.val_ds = self.data
+    #             self.gen_ds = self.data
+    #         else:
+    #             L = len(self.data)
+    #             L_gen = min(500, int(0.1 * L))
+    #             L_train = int(0.8*L)
+    #             L_val = L - (L_gen + L_train)
+    #             self.train_ds, self.val_ds, self.gen_ds = random_split(self.data, [L_train, L_val, L_gen])
+    #     else:
+    #         self.train_ds, self.val_ds = random_split(self.data, [0.8,0.2])
+    
     
     def train_dataloader(self):
-        return DataLoader(self.train_ds, self.B, shuffle=True, num_workers=self.num_workers)
+        train_ds = SequentialLegoData(self.datafolder, "train", transform=self.transform)
+        return DataLoader(train_ds, self.B, shuffle=True, num_workers=self.num_workers)
     
     def val_dataloader(self):
-        val = DataLoader(self.val_ds, self.B, shuffle=False, num_workers=self.num_workers)
+        val_ds = SequentialLegoData(self.datafolder, "val", transform=self.transform)
+        val = DataLoader(val_ds, self.B, shuffle=False, num_workers=self.num_workers)
         if self.include_gen_step:
-            gen = DataLoader(self.gen_ds, 1, shuffle=False, num_workers = self.num_workers)
+            gen_ds = SequentialLegoData(self.datafolder, "gen", transform=self.transform)
+            gen = DataLoader(gen_ds, 1, shuffle=False, num_workers = self.num_workers)
             return val, gen
         return val
 
@@ -129,19 +146,27 @@ class SequentialLegoData(InMemoryDataset):
     - index of graph node belongs to (between 0 and B)
     
     """
-    def __init__(self, root, transform=None):
+    def __init__(self, root, split='train', transform=None):
+        self.split = split
         super().__init__(root)
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        match self.split:
+            case 'train':
+                processed_path = self.processed_paths[0]
+            case 'val':
+                processed_path = self.processed_paths[1]
+            case 'gen':
+                processed_path = self.processed_paths[2]
+        self.data, self.slices, self.model_starts = torch.load(processed_path)
         self.transform = transform
 
     @property
     def raw_file_names(self):
-        return ['dataset.pkl']
+        return ['dataset.pkl', 'splits.pkl']
     
     @property
     def processed_file_names(self):
-        return ["seq_torch_geo_data.pt"]
-
+        return ["seq_data_train.pt", "seq_data_val.pt", "seq_data_gen.pt"]
+    
     def get(self, idx):
         g = super().get(idx)
 
@@ -151,10 +176,23 @@ class SequentialLegoData(InMemoryDataset):
     
     def process(self):
         data_list = []
+        model_starts = []
 
-        path = os.path.join(self.raw_dir, self.raw_file_names[0])
-        with open(path, "rb") as f:
+        with open(self.raw_paths[0], "rb") as f:
             data = pickle.load(f)
+        
+        with open(self.raw_paths[1], "rb") as f:
+            split = pickle.load(f)
+        match self.split:
+            case 'train':
+                data = [data[i] for i in split['train']]
+                processed_path = self.processed_paths[0]
+            case 'val':
+                data = [data[i] for i in split['val']]
+                processed_path = self.processed_paths[1]
+            case 'gen':
+                data = [data[i] for i in split['gen']]
+                processed_path = self.processed_paths[2]
 
         model_valid = 0
         model_invalid = 0
@@ -164,6 +202,7 @@ class SequentialLegoData(InMemoryDataset):
 
         print("Processing Data...")
         for obj in tqdm(data):
+            model_starts.append(len(data_list))
             try:
                 model = LegoModel.from_obj(obj)
                 LegoModel.make_standard_order(model)
@@ -201,7 +240,7 @@ class SequentialLegoData(InMemoryDataset):
         data, slices = self.collate(data_list)
 
         print(f"Data Processed: {model_valid} models valid, {model_invalid} models invalid, {step_valid} steps valid, {step_invalid} steps invalid")
-        print(f"Old and new models invalid: {old_model_invalid}")
+        print(f"Old and new models invalid: {old_model_invalid}")        
 
-        torch.save((data, slices), self.processed_paths[0])
+        torch.save((data, slices, model_starts), processed_path)
 

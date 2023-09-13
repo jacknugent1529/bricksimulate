@@ -53,10 +53,13 @@ class GraphNet(nn.Module):
                 nn.SiLU(),
             )
 
+        GNNConv = gnn.GENConv
         self.convs = nn.ModuleList([
-            gnn.GINEConv(get_mlp()),
-            gnn.GINEConv(get_mlp()),
-            gnn.GINEConv(get_mlp()),
+            GNNConv(dim, dim),
+            GNNConv(dim, dim),
+            GNNConv(dim, dim),
+            # gnn.GINEConv(get_mlp()),
+            # gnn.GINEConv(get_mlp()),
         ])
 
     def forward(self, x: Float[Tensor, "N dim"], edge_index: Int[Tensor, "2 M"], edge_attr: Float[Tensor, "M dim"]):
@@ -369,7 +372,11 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
             f'{prefix}/brick_acc': float(brick_correct), 
             f'{prefix}/edge_node_acc': float(node_correct),
             f'{prefix}/edge_attr_acc': float(edge_correct),
-        }, batch_size=1, on_epoch=True, add_dataloader_idx=False)
+        }, batch_size=1, on_epoch=True, add_dataloader_idx=False, on_step=False)
+
+        self.log_dict({
+            f'{prefix}/acc': float(brick_correct and node_correct and edge_correct),
+        }, batch_size=1, on_epoch=True, add_dataloader_idx=False, on_step=False, prog_bar=True)
         
     
     #TODO: improve

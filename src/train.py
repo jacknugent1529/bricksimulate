@@ -15,7 +15,7 @@ trainer_callbacks = [
 ]
 
 def run(args):
-    data = SeqDataModule(args.data_folder, args.batch_size, args.num_workers, transform=MyToUndirected('mean'), include_gen_step=True)
+    data = SeqDataModule(args.data_folder, args.batch_size, args.num_workers, transform=MyToUndirected('mean'), include_gen_step=True, share_data=args.share_data)
     num_bricks = 3 # 2 rotations + STOP brick
     model = LegoNet(args.dim, num_bricks, args.l, args.g)
 
@@ -33,7 +33,7 @@ def main():
     parser = ArgumentParser()
     
     # data
-    parser.add_argument("--data-folder", type=str)
+    parser.add_argument("--data-folder", type=str, default="data")
     parser.add_argument("-B","--batch-size", type=int)
     parser.add_argument("--num-workers", type=int, default=3)
 
@@ -41,7 +41,7 @@ def main():
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--fast-dev-run", action="store_true")
     parser.add_argument("--check-val-every-n-epoch", type=int, default=1)
-
+    parser.add_argument("--share-data", action="store_true")
 
     parser = LegoNet.add_model_specific_args(parser)
 
