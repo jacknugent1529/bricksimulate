@@ -100,24 +100,24 @@ class JointGraphDataModule(pl.LightningDataModule):
     
     def prepare_data(self) -> None:
         data = SequentialLegoDataJointGraph(self.datafolder, "train", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
-        data = SequentialLegoDataJointGraph(self.datafolder, "val", self.n_points, transform=self.transform, randomize_order=self.random_order, repeat=self.repeat)
-        data = SequentialLegoDataJointGraph(self.datafolder, "gen", self.n_points, transform=self.transform, randomize_order=self.random_order, repeat=self.repeat)
+        data = SequentialLegoDataJointGraph(self.datafolder, "val", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
+        data = SequentialLegoDataJointGraph(self.datafolder, "gen", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
     
     def train_dataloader(self):
-        train_ds = SequentialLegoDataJointGraph(self.datafolder, "train", self.n_points, transform=self.transform, randomize_order=self.random_order, repeat=self.repeat)
+        train_ds = SequentialLegoDataJointGraph(self.datafolder, "train", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
         return DataLoader(train_ds, self.B, shuffle=True, num_workers=self.num_workers)
     
     def val_dataloader(self):
         if self.shared_datasets:
-            val_ds = SequentialLegoDataJointGraph(self.datafolder, "train", self.n_points, transform=self.transform, randomize_order=self.random_order, repeat=self.repeat)
+            val_ds = SequentialLegoDataJointGraph(self.datafolder, "train", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
         else:    
-            val_ds = SequentialLegoDataJointGraph(self.datafolder, "val", self.n_points, transform=self.transform, randomize_order=self.random_order, repeat=self.repeat)
+            val_ds = SequentialLegoDataJointGraph(self.datafolder, "val", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
         val = DataLoader(val_ds, self.B, shuffle=False, num_workers=self.num_workers)
         if self.include_gen_step:
             if self.shared_datasets:
-                gen_ds = SequentialLegoDataJointGraph(self.datafolder, "train", self.n_points, transform=self.transform, randomize_order=self.random_order, repeat=self.repeat)
+                gen_ds = SequentialLegoDataJointGraph(self.datafolder, "train", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
             else:
-                gen_ds = SequentialLegoDataJointGraph(self.datafolder, "gen", self.n_points, transform=self.transform, randomize_order=self.random_order, repeat=self.repeat)
+                gen_ds = SequentialLegoDataJointGraph(self.datafolder, "gen", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
             gen = DataLoader(gen_ds, 1, shuffle=False, num_workers = self.num_workers)
             return val, gen
         return val
@@ -359,6 +359,8 @@ class SequentialLegoDataJointGraph(InMemoryDataset):
     def __init__(self, root, split, n_points, transform=None, random_order=False, repeat=1):
         self.n_points = n_points
         self.split = split
+        self.random_order = random_order
+        self.repeat = repeat
         super().__init__(root)
         match self.split:
             case 'train':
@@ -369,8 +371,6 @@ class SequentialLegoDataJointGraph(InMemoryDataset):
                 processed_path = self.processed_paths[2]
         self.data, self.slices, = torch.load(processed_path)
         self.transform = transform
-        self.random_order = random_order
-        self.repeat = repeat
 
     @property
     def raw_file_names(self):
@@ -415,7 +415,7 @@ class SequentialLegoDataJointGraph(InMemoryDataset):
         step_invalid = 0
         step_valid = 0
 
-        print("Processing Data...")
+        print(f"Processing Data... (repeat {self.repeat})")
         for _ in range(self.repeat):
             for obj in tqdm(data[:5]):
                 try:
