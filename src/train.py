@@ -17,7 +17,7 @@ trainer_callbacks = [
 
 def run(args):
     #TODO: replace 200 with parameter
-    data = JointGraphDataModule(args.data_folder, 1_000, args.batch_size, args.num_workers, transform=LegoToUndirected('mean'), include_gen_step=True, share_data=args.share_data)
+    data = JointGraphDataModule(args.data_folder, 1_000, args.batch_size, args.num_workers, transform=LegoToUndirected('mean'), include_gen_step=True, share_data=args.share_data, randomize_order=args.randomize_order, repeat=args.repeat)
     num_bricks = 3 # 2 rotations + STOP brick
     model = JointGraphLegoNet(args.dim, num_bricks, args.num_layers, args.l, args.g)
 
