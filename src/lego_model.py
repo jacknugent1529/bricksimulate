@@ -48,6 +48,12 @@ def prioritized_search(g: Data, root_idx: int, priorities: dict[int,any]):
 def default_priorities(n):
     return {i:i for i in range(n)}
 
+def random_priorities(n):
+    idxs = np.arange(n)
+    np.random.shuffle(idxs)
+
+    return {i:idxs[i] for i in range(n)}
+
 def get_brick_priority_order(model: "LegoModel") -> dict[int, any]:
     centers = utils.prism_center(model.pos)
 
@@ -132,8 +138,11 @@ class LegoModel(Data):
         self.pos = LegoModel.build(self)
 
     
-    def to_sequence(data):
-        priorities = default_priorities(len(data.x)) # avoid using 'standard' priorities unless necessary
+    def to_sequence(data, random_order=False):
+        if random_order:
+            priorities = random_priorities(len(data.x)) # avoid using 'standard' priorities unless necessary
+        else:
+            priorities = default_priorities(len(data.x)) # avoid using 'standard' priorities unless necessary
         graph_traversal = prioritized_search(data, 0, priorities)
         visited = torch.zeros(len(data.x)).to(bool)
         visited[0] = True

@@ -8,6 +8,11 @@ from torch_geometric.data import Batch
 from ..sequential_dataset import pad_voxels_to_shape, MAX_VOXEL
 
 
+def complete_bipartite_edges(m,n):
+    row = torch.arange(m).reshape(-1,1).tile(n).reshape(-1)
+    col = torch.arange(n).repeat(m)
+    return torch.stack([row, col])
+
 class AbstractGenerativeModel():
     def gen_brick(self, graph) -> BuildStep:
         raise NotImplementedError()
@@ -38,7 +43,7 @@ class AbstractGenerativeModel():
             seq = []
 
         i = 0
-        while True:
+        while i < 20:
             if transform is not None:
                 current_model = transform(current_model)
             batch = Batch.from_data_list([current_model])
@@ -56,11 +61,31 @@ class AbstractGenerativeModel():
             if keep_seq:
                 seq.append(batch.clone())
             try:
-                LegoModel.add_piece(current_model, new_brick, edge_attr, node_idx.to(int), top)
+                tmp_model = Data(
+                    x=current_model['lego'].x,
+                    edge_index=current_model['lego','lego'].edge_index,
+                    edge_attr=current_model['lego','lego'].edge_attr,
+                    pos=current_model['lego'].pos
+                )
+                LegoModel.add_piece(tmp_model, new_brick, edge_attr, node_idx.to(int), top)
+                
+                current_model['lego'].x = tmp_model.x
+                current_model['lego'].pos = tmp_model.pos
+                current_model['lego','lego'].edge_index = tmp_model.edge_index
+                current_model['lego','lego'].edge_attr = tmp_model.edge_attr
+
+
+                
+                current_model['lego', 'point'].edge_index = complete_bipartite_edges(current_model['lego'].num_nodes, current_model['point'].num_nodes)
+                current_model['point','lego'].edge_index = complete_bipartite_edges(current_model['point'].num_nodes, current_model['lego'].num_nodes)
+
+                print(current_model)
             except:
                 print("Invalid piece placement; terminate generation")
                 break
             i += 1
+        
+        print(f"Generated {i} steps")
         
         if keep_seq:
             return batch, seq
