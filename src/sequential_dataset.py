@@ -423,7 +423,7 @@ class SequentialLegoDataJointGraph(InMemoryDataset):
                     LegoModel.make_standard_order(model)
                     point_cloud = sample_point_cloud_from_prisms(model.pos, self.n_points)
                     pg = Data(pos=point_cloud)
-                    point_graph = KNNGraph()(pg)
+                    point_graph = KNNGraph(force_undirected=True)(pg)
                     
                     model_valid += 1
 
