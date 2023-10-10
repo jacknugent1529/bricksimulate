@@ -51,6 +51,7 @@ def default_priorities(n):
 def random_priorities(n):
     idxs = np.arange(n)
     np.random.shuffle(idxs)
+    # TODO: random, but not as random as shuffle
 
     return {i:idxs[i] for i in range(n)}
 

@@ -346,27 +346,29 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
     # - randomly sample from distributions instead of argmax
     # - add a temperature parameter
     # - allow prediction on multiple graphs at once (primarily for testing purposes, not generation)
-    def gen_brick(self, graph):
+    def gen_brick(self, graph, beta=1.):
         assert graph.num_graphs == 1
         node_repr = self.process_graph(graph)
         lego = graph['lego']
 
         # select brick (node)
         brick_logits = self.brick_choice_agent(node_repr, lego.batch)
-        brick_idx = torch.argmax(brick_logits, dim=-1)
+        brick_dist = torch.distributions.categorical.Categorical(logits=brick_logits.reshape(-1)*beta)
+        brick_idx = brick_dist.sample((1,))
 
         # select node to be connected to
         true_brick_node = brick_idx[lego.batch]
         true_brick_emb = self.brick_embed.embed_idx(true_brick_node.to(int)) # using true brick
         edge_node_logits = self.node_choice_agent(node_repr, true_brick_emb)
-
-        edge_node_idx = torch.argmax(edge_node_logits).unsqueeze(0)
+        edge_node_dist = torch.distributions.categorical.Categorical(logits=edge_node_logits.reshape(-1) * beta)
+        edge_node_idx = edge_node_dist.sample((1,))
 
         # select attributes of edge
         true_node_repr = node_repr[edge_node_idx]
         edge_attr_logits = self.edge_choice_agent(true_node_repr, self.brick_embed.embed_idx(brick_idx))
 
-        edge_attr_idx = torch.argmax(edge_attr_logits)
+        edge_attr_dist = torch.distributions.categorical.Categorical(logits=edge_attr_logits * beta)
+        edge_attr_idx = edge_attr_dist.sample((1,))
 
         new_brick = self.brick_embed.from_idx(brick_idx)[0]
         top, x_shift, y_shift = self.graph_embed.from_edge_ids(edge_attr_idx, True)
