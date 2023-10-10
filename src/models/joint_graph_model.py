@@ -37,12 +37,7 @@ class GraphEmbed(nn.Module):
         super().__init__()
         self.dim = dim
 
-        self.pos_proj = nn.Sequential(
-            nn.Linear(6, 4 * dim),
-            nn.SiLU(),
-            nn.Linear(4 * dim, dim),
-            nn.BatchNorm1d(dim)
-        )
+        self.pos_proj = nn.Linear(6, dim)
 
         # shift values range from -3 to 3
 

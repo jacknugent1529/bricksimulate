@@ -312,6 +312,7 @@ def make_joint_graph(lego: Data, point_cloud_graph: Data):
 
 
 def sample_point_cloud_from_prisms(prisms: PrismArr, N: int) -> Float[Tensor, "n 3"]:
+    # TODO: generate points closer to surface
     prism_lens = torch.stack([(prisms[:,3] - prisms[:,0]), (prisms[:,4] - prisms[:,1]), (prisms[:,5] - prisms[:,2])], dim=1)
     volumes = prism_lens[:,0] * prism_lens[:,1] * prism_lens[:,2]
     ps = volumes / volumes.sum()
@@ -420,6 +421,7 @@ class SequentialLegoDataJointGraph(InMemoryDataset):
             for obj in tqdm(data[:5]):
                 try:
                     model = LegoModel.from_obj(obj)
+                    # TODO: see if this is necessary
                     LegoModel.make_standard_order(model)
                     point_cloud = sample_point_cloud_from_prisms(model.pos, self.n_points)
                     pg = Data(pos=point_cloud)
