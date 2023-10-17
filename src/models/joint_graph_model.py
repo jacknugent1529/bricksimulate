@@ -19,16 +19,23 @@ class GraphProcessor(nn.Module):
 
         get_conv = lambda : gnn.HeteroConv({
             ('lego', 'to', 'lego'): gnn.GENConv(dim, dim),
-            ('points', 'to', 'points'): gnn.EdgeConv(gnn.MLP([2*dim, 4*dim, dim])),
-            ('lego', 'to', 'points'): gnn.GATConv(dim, dim, add_self_loops=False),
-            ('points', 'to', 'lego'): gnn.GATConv(dim, dim, add_self_loops=False),
+            ('point', 'to', 'point'): gnn.EdgeConv(gnn.MLP([2*dim, 4*dim, dim])),
+            ('lego', 'to', 'point'): gnn.GATConv(dim, dim, add_self_loops=False),
+            ('point', 'to', 'lego'): gnn.GATConv(dim, dim, add_self_loops=False),
         })
-        self.convs = nn.ModuleList([get_conv() for _ in range(6)])
+        self.convs = nn.ModuleList([get_conv() for _ in range(num_layers)])
 
-    def forward(self, x_dict, edge_index_dict, edge_attr_dict=None):
+    def forward(self, x_dict, edge_index_dict, edge_attr_dict=None, return_attn=False):
+        attns = []
         for conv in self.convs:
+            if return_attn:
+                attn_conv = conv.convs['lego__to__point']
+                _, attn = attn_conv((x_dict['lego'], x_dict['point']), edge_index_dict[('lego','to','point')], return_attention_weights=True)
+                attns.append(attn)
             x_dict = conv(x_dict, edge_index_dict, edge_attr_dict)
         
+        if return_attn:
+            return x_dict, attns
         return x_dict
     
     
@@ -226,11 +233,11 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         self.node_choice_agent = NodeChoiceAgent(dim)
         self.edge_choice_agent = EdgeChoiceAgent(dim, self.graph_embed.num_edge_embeddings)
 
-        self.val_metrics = {
+        self.val_metrics = nn.ModuleDict({
             'brick': torchmetrics.Accuracy('multiclass', num_classes=num_bricks, average='macro'),
             'edge_node': torchmetrics.Accuracy('multiclass', average='micro', num_classes=1_000),
-            'edge_attr': torchmetrics.Accuracy('multiclass', average='macro', num_classes=self.graph_embed.num_edge_embeddings)
-        }
+            'edge_attr': torchmetrics.Accuracy('multiclass', average='micro', num_classes=self.graph_embed.num_edge_embeddings)
+        })
 
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -240,10 +247,13 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         parser.add_argument("--g", type=int, default=1, help='hyperparameter multiplier for edge_attr_loss')
         return parent_parser
     
-    def process_graph(self, batch):
+    def process_graph(self, batch, return_attn=False):
         x_dict, edge_attr_dict = self.graph_embed(batch)
 
-        node_repr = self.graph_processor(x_dict, batch.edge_index_dict, edge_attr_dict)
+        node_repr = self.graph_processor(x_dict, batch.edge_index_dict, edge_attr_dict, return_attn=return_attn)
+        if return_attn:
+            node_repr, attn = node_repr
+            return node_repr['lego'], attn
         
         return node_repr['lego']
 
@@ -296,7 +306,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
             f'{prefix}/edge_attr_loss': edge_attr_loss,
         }, batch_size=B, add_dataloader_idx=False)
 
-        self.log_dict({f'{prefix}/loss': loss,}, prog_bar=prefix == 'val', batch_size=B, add_dataloader_idx=False)
+        self.log_dict({f'{prefix}/loss': loss,}, prog_bar=prefix == 'val', batch_size=B, add_dataloader_idx=False, on_step=prefix != 'val', on_epoch=prefix == 'val')
 
         return loss
     
@@ -310,7 +320,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
             self.step(batch, 'val', self.val_metrics)
 
             for k,v in self.val_metrics.items():
-                self.log(f'val/{k}_acc', v.compute(), batch_size=B, add_dataloader_idx=False)
+                self.log(f'val/{k}_acc', v, batch_size=B, add_dataloader_idx=False, on_epoch=True, on_step=False)
         else:
             # test full generation
             self.gen_step(batch, batch_idx, prefix='gen')

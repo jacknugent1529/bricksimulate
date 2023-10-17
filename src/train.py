@@ -25,6 +25,7 @@ def run(args):
         max_epochs=args.epochs, 
         check_val_every_n_epoch=args.check_val_every_n_epoch,
         fast_dev_run=args.fast_dev_run, 
+        log_every_n_steps=1,
         # precision=16,
         callbacks=trainer_callbacks, 
     )
@@ -39,7 +40,7 @@ def main():
     parser.add_argument("-B","--batch-size", type=int)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--randomize-order", action='store_true')
-    parser.add_argument("--repeat", type=int)
+    parser.add_argument("--repeat", type=int, default=1)
 
     # training
     parser.add_argument("--epochs", type=int)

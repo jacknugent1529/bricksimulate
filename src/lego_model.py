@@ -1,5 +1,5 @@
 from torch_geometric.data import Data
-from typing import NamedTuple, Union
+from typing import NamedTuple, Union, Optional
 from math import ceil, floor
 import torch
 from . import utils
@@ -250,7 +250,7 @@ class LegoModel(Data):
 
         return True
 
-    def to_voxels(self, *resolution: Union[float, tuple[float,float,float]]):
+    def to_voxels(self, *resolution: Union[float, tuple[float,float,float]], focus=Optional[Tensor]):
         """
         Resolution represents the dimensions of an individual voxel. Can be specified by a single number, which is used for all dimensions, or 3 x/y/z resolutions. 
 
@@ -278,11 +278,21 @@ class LegoModel(Data):
         boxes_z = ceil((max_z - min_z) / res_z)
 
         voxels = torch.zeros(boxes_x, boxes_y, boxes_z)
+        if focus is not None:
+            focus_collision = torch.zeros_like(voxels)
+            focus_arr = torch.zeros(len(self.pos)).to(int)
+            focus_arr[focus] = 1
+
 
         for i,x in enumerate(torch.linspace(min_x, max_x, boxes_x)):
             for j,y in enumerate(torch.linspace(min_y, max_y, boxes_y)):
                 for k,z in enumerate(torch.linspace(min_z, max_z, boxes_z)):
                     p = torch.Tensor([x,y,z])
-                    voxels[i,j,k] = utils.check_collision_point(p, self.pos).any()
-        
+                    collision = utils.check_collision_point(p, self.pos)
+                    voxels[i,j,k] = collision.any()
+
+                    if focus is not None:
+                        focus_collision[i,j,k] = (collision & focus_arr).any()
+        if focus is not None:
+            return voxels, focus_collision
         return voxels
