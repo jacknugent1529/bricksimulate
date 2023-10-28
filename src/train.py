@@ -1,4 +1,7 @@
-from .sequential_dataset import JointGraphDataModule, MyToUndirected, LegoToUndirected
+"""
+This module sets up training for the model
+"""
+from .sequential_point_cloud_dataset import JointGraphDataModule, LegoToUndirected
 from .models.basic_model import LegoNet as BasicLegoNet
 from .models.joint_graph_model import LegoNet as JointGraphLegoNet
 from lightning.pytorch.callbacks import ModelSummary, ModelCheckpoint
@@ -16,8 +19,7 @@ trainer_callbacks = [
 ]
 
 def run(args):
-    #TODO: replace 200 with parameter
-    data = JointGraphDataModule(args.data_folder, 1_000, args.batch_size, args.num_workers, transform=LegoToUndirected('mean'), include_gen_step=True, share_data=args.share_data, randomize_order=args.randomize_order, repeat=args.repeat)
+    data = JointGraphDataModule(args.data_folder, args.n_points, args.batch_size, args.num_workers, transform=LegoToUndirected('mean'), include_gen_step=True, share_data=args.share_data, randomize_order=args.randomize_order, repeat=args.repeat)
     num_bricks = 3 # 2 rotations + STOP brick
     model = JointGraphLegoNet(args.dim, num_bricks, args.num_layers, args.l, args.g)
 
@@ -41,6 +43,7 @@ def main():
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--randomize-order", action='store_true')
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--n-points", type=int, default=1_000)
 
     # training
     parser.add_argument("--epochs", type=int)

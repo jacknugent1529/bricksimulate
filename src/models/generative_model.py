@@ -1,3 +1,7 @@
+"""
+Contains base class for generative models
+"""
+
 from torch_geometric.data import Data
 from ..data_types import Brick, brick, Edge, edge, BuildStep, buildstep
 import torch
@@ -5,7 +9,7 @@ from torch import Tensor
 from jaxtyping import Int
 from ..lego_model import LegoModel
 from torch_geometric.data import Batch
-from ..sequential_dataset import pad_voxels_to_shape, MAX_VOXEL
+from ..sequential_voxel_dataset import pad_voxels_to_shape, MAX_VOXEL
 
 
 def complete_bipartite_edges(m,n):
@@ -14,6 +18,10 @@ def complete_bipartite_edges(m,n):
     return torch.stack([row, col])
 
 class AbstractGenerativeModel():
+    """
+    Base class for generative models. The `generate_single_lego_model` should use the `gen_brick` 
+    model in a manner which is independent of a particular model architecture
+    """
     def gen_brick(self, graph) -> BuildStep:
         raise NotImplementedError()
     

@@ -1,5 +1,19 @@
+"""
+Representation of lego models as torch_geometric graph `Data`
+
+Intended usage:
+```
+import lego_model
+
+data = ... # torch geometric data
+
+for model in lego_model.to_sequence(data):
+    voxels = lego_model.to_voxels(model)
+    ...
+```
+"""
 from torch_geometric.data import Data
-from typing import NamedTuple, Union, Optional
+from typing import Union, Optional
 from math import ceil, floor
 import torch
 from . import utils
@@ -10,10 +24,18 @@ import networkx as nx
 from torch_geometric.utils.convert import to_networkx
 import numpy as np
 from torch_geometric.utils.subgraph import subgraph
+import matplotlib.pyplot as plt
+import tqdm
+import io
+import imageio
+
 from .data_types import brick, edge, buildstep, Brick, Edge, BuildStep, BRICK_HEIGHT
  
     
 def prioritized_search(g: Data, root_idx: int, priorities: dict[int,any]):
+    """
+    Search over graph by choosing the neighbor with the lowest priority
+    """
     g_dir: nx.Graph = to_networkx(g, node_attrs=['x'], edge_attrs=['edge_attr'])
     g_undir = g_dir.to_undirected()
 
@@ -86,8 +108,11 @@ class LegoModel(Data):
 
     pos (bounding box):
     - x1,y1,z1,x2,y2,z2
+
+    NOTE: models should contain a single connected component
     """
     def from_obj(obj: dict) -> "LegoModel":
+        """Convert from raw python dict"""
         X = []
         for label in obj['node_labels']:
             X.append(brick.from_str(label))
@@ -105,6 +130,8 @@ class LegoModel(Data):
 
         model = Data(x = X, edge_index=edge_index.to(int), edge_attr=edge_attr)
         model.pos = LegoModel.build(model)
+
+        assert utils.graph_connected(model)
 
         return model
 
@@ -125,6 +152,11 @@ class LegoModel(Data):
         return pos
 
     def make_standard_order(self):
+        """
+        Relabel bricks so that the nodes labelled 0,1,...,n correspond to the proper build order.
+
+        This should be called before to_sequence.
+        """
         new_to_old = torch.from_numpy(get_brick_priority_order(self))
 
         old_to_new = torch.zeros_like(new_to_old)
@@ -140,6 +172,9 @@ class LegoModel(Data):
 
     
     def to_sequence(data, random_order=False):
+        """Convert a lego model to a sequence of steps. 
+        
+        Note: use make_standard_order to build in the proper order"""
         if random_order:
             priorities = random_priorities(len(data.x)) # avoid using 'standard' priorities unless necessary
         else:
@@ -176,9 +211,11 @@ class LegoModel(Data):
 
         yield final_step
         
-
-
+    # TODO: refactor this and check that code still works
     def place_piece(pos, b: Brick, e: Edge, other_idx: int, top: bool):
+        """
+        
+        """
         other_prism = pos[other_idx]
         assert len(other_prism) == 6, other_prism.shape
         prism = brick.get_prism(b)
@@ -200,13 +237,15 @@ class LegoModel(Data):
             dz = other_prism[2] - prism[5]
         prism[[2,5]] += dz
 
-        #TODO: Fix stack here
         if utils.check_intersection_small(prism, pos).any():
             raise ValueError("invalid brick placement")
 
         return prism
 
     def generate_connections(self, pos, new_node_idx):
+        """
+        Generate connections from a newly placed brick to adjacent ones.
+        """
         scaled = utils.scale_prism(pos, z = 1.1)
         intersections = utils.check_intersection(scaled, self.pos)
 
@@ -228,6 +267,9 @@ class LegoModel(Data):
             self.edge_index = torch.cat([self.edge_index, new_edge_index.to(int)], dim=1)
 
     def add_piece(data, b: Brick, e: Edge, other_idx: int, top: bool):
+        """
+        Add a new brick to the lego model
+        """
         # node attributes
         new_node_idx = len(data.x)
         data.x = torch.cat([data.x, b[None,:]])
@@ -240,6 +282,9 @@ class LegoModel(Data):
         LegoModel.generate_connections(data, new_pos, new_node_idx)
 
     def model_valid(self) -> bool:
+        """
+        Check if the lego model is valid (no pieces intersect)
+        """
         for i, prism in enumerate(self.pos):
             intersections = utils.check_intersection_small(prism, self.pos)
             mask = torch.ones_like(intersections).to(bool)
@@ -252,6 +297,8 @@ class LegoModel(Data):
 
     def to_voxels(self, *resolution: Union[float, tuple[float,float,float]], focus=Optional[Tensor]):
         """
+        Convert the lego model to voxels
+
         Resolution represents the dimensions of an individual voxel. Can be specified by a single number, which is used for all dimensions, or 3 x/y/z resolutions. 
 
         Larger resolution is "coarser", smaller is ore fine
@@ -296,3 +343,26 @@ class LegoModel(Data):
         if focus is not None:
             return voxels, focus_collision
         return voxels
+
+def create_build_gif(steps: list[LegoModel], filename: str):
+    # Set up the figure and axis
+    ax = plt.figure().add_subplot(projection='3d')
+
+    # Generate multiple images
+    images = []
+    duration = 100  # Duration of each frame in milliseconds
+
+    for step in tqdm(steps):
+        # Clear the axis and generate a new plot for each frame
+        ax.clear()
+        voxels = LegoModel.to_voxels(step, 1)
+        ax.voxels(voxels, edgecolor='k')
+
+        # Save the figure as an image buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        images.append(imageio.imread(buf))
+
+    # Save the images as a GIF with specified frame duration
+    imageio.mimsave(filename, images, duration=duration)    

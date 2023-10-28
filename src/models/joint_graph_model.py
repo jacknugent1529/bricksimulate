@@ -23,7 +23,16 @@ class GraphProcessor(nn.Module):
             ('lego', 'to', 'point'): gnn.GATConv(dim, dim, add_self_loops=False),
             ('point', 'to', 'lego'): gnn.GATConv(dim, dim, add_self_loops=False),
         })
-        self.convs = nn.ModuleList([get_conv() for _ in range(num_layers)])
+        get_conv2 = lambda : gnn.HeteroConv({
+            ('lego', 'to', 'lego'): gnn.GENConv(dim, dim),
+            ('point', 'to', 'point'): gnn.EdgeConv(gnn.MLP([2*dim, 4*dim, dim])),
+        })
+        def get_conv_stack():
+            return gnn.Sequential('x_dict, edge_index_dict, edge_attr_dict', [
+                (get_conv(), 'x_dict, edge_index_dict, edge_attr_dict->x_dict'),
+                (get_conv2(), 'x_dict, edge_index_dict, edge_attr_dict->x_dict')
+            ])
+        self.convs = nn.ModuleList([get_conv_stack() for _ in range(num_layers)])
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict=None, return_attn=False):
         attns = []

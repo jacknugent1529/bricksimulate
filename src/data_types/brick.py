@@ -1,3 +1,18 @@
+"""
+Functions to operate on bricks
+Bricks are represented as torch tensors so they can be used with pytorch easily
+
+Intended usage in other modules:
+```
+import brick
+
+b = brick.new(0, 90)
+
+brick.rot(b) # 90
+brick.get_prism(b)
+```
+"""
+
 import torch
 from torch import Tensor
 
@@ -6,14 +21,16 @@ BRICK_HEIGHT = 1.2
 
 Brick = Tensor
 
-def id(brick):
-    return brick[...,0]
+def id(brick: Brick) -> Tensor:
+    """Get id of brick; can broadcast over tensors"""
+    return brick[...,0].to(int)
 
-# @property
-def rot(brick):
+def rot(brick: Brick) -> Tensor:
+    """get rotation of brick; can broadcast over tensors"""
     return brick[...,1]
 
-def from_str(s) -> Tensor:
+def from_str(s: str) -> Brick:
+    """Convert string to Brick tensors"""
     if s == 'Brick(2, 4)':
         return new(0,0)
     elif s == 'Brick(4, 2)':
@@ -22,12 +39,17 @@ def from_str(s) -> Tensor:
         assert False, "invalid brick"
 
 def len():
+    """length of brick tensor"""
     return 2
 
-def new(id, rot, **kwargs) -> Tensor:
+def new(id: int, rot: int, **kwargs) -> Brick:
+    """create a new brick"""
     return torch.Tensor([id, rot], **kwargs)
 
-def get_prism(brick):
+def get_prism(brick) -> Tensor:
+    """
+    get prism associated with a single rbick
+    """
     if id(brick) != 0:
         raise ValueError("Only 2x4 bricks currently supported")
     if rot(brick) == 0:

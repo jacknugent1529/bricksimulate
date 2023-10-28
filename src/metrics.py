@@ -1,3 +1,9 @@
+"""
+This file contains a few metrics for checking if two lego models are equivalent up to translations.
+
+Mostly used for debugging purposes.
+"""
+
 from torch_geometric.data import Data
 import torch
 from .utils import Prism

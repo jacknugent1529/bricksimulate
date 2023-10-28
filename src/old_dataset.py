@@ -1,4 +1,7 @@
-#NOTE: OUTDATED; DON'T USE THIS; just keeping around for comparisons
+"""
+NOTE: OUTDATED; DON'T USE THIS; just keeping around for comparisons
+"""
+
 from torch.utils.data import Dataset
 import pickle
 from torch_geometric.data import Data
@@ -127,7 +130,6 @@ class LegoModel(Data):
     - x1,y1,z1,x2,y2,z2
 
     NOTE: currently only supports models with a single connected component
-    TODO: add checks for this
     """
     def from_obj(obj: dict) -> "LegoModel":
         # convert to torch geometric
@@ -153,6 +155,8 @@ class LegoModel(Data):
 
         model = Data(x = X, edge_index=edge_index.to(int), edge_attr=edge_attr)
         model.pos = LegoModel.get_prisms(model)
+
+        assert utils.graph_connected(model)
 
         return model
     
