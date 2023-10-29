@@ -4,3 +4,4 @@ data
 lightning_log*
 env/
 scratch.ipynb
+.DS_Store
