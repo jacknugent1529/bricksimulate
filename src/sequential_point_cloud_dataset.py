@@ -9,6 +9,7 @@ import pickle
 from tqdm import tqdm
 import numpy as np
 from jaxtyping import Float
+import random
 
 from .lego_model import LegoModel
 from .old_dataset import LegoModel as OldLegoModel
@@ -28,10 +29,14 @@ class LegoToUndirected(BaseTransform):
         
         return data
 
-def complete_bipartite_edges(m,n):
+def complete_bipartite_edges(m,n,prob=0.1):
     row = torch.arange(m).reshape(-1,1).tile(n).reshape(-1)
     col = torch.arange(n).repeat(m)
-    return torch.stack([row, col])
+    n = int(prob * len(row))
+    indices = list(zip(row, col))
+    random_pairs = random.sample(indices, n)
+    random_pairs = torch.tensor(np.array(random_pairs)).T
+    return random_pairs
 
 def sample_point_cloud_from_prisms(prisms: PrismArr, N: int) -> Float[Tensor, "n 3"]:
     """Generate points uniformly within prisms"""
@@ -59,8 +64,8 @@ def make_joint_graph(lego: Data, point_cloud_graph: Data) -> HeteroData:
     data['point'].pos = point_cloud_graph.pos
     data['point', 'point'].edge_index = point_cloud_graph.edge_index
 
-    data['lego', 'point'].edge_index = complete_bipartite_edges(data['lego'].num_nodes, data['point'].num_nodes)
-    data['point', 'lego'].edge_index = complete_bipartite_edges(data['point'].num_nodes, data['lego'].num_nodes)
+    data['lego', 'point'].edge_index = complete_bipartite_edges(data['lego'].num_nodes, data['point'].num_nodes, prob=0.1)
+    data['point', 'lego'].edge_index = complete_bipartite_edges(data['point'].num_nodes, data['lego'].num_nodes, prob=0.1)
 
     return data
 
