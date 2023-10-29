@@ -8,6 +8,7 @@ from torch_geometric.data import Data
 from torch import Tensor
 from jaxtyping import Float, Bool
 import torch
+from . import utils
 import networkx as nx
 from math import ceil
 from torch_geometric.data import InMemoryDataset
@@ -156,7 +157,8 @@ class LegoModel(Data):
         model = Data(x = X, edge_index=edge_index.to(int), edge_attr=edge_attr)
         model.pos = LegoModel.get_prisms(model)
 
-        assert utils.graph_connected(model)
+        if not utils.graph_connected(model, 'weak'):
+            raise ValueError("Invalid Model: we expect one connected component")
 
         return model
     

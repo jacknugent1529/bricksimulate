@@ -131,7 +131,8 @@ class LegoModel(Data):
         model = Data(x = X, edge_index=edge_index.to(int), edge_attr=edge_attr)
         model.pos = LegoModel.build(model)
 
-        assert utils.graph_connected(model)
+        if not utils.graph_connected(model, 'weak'):
+            raise ValueError("Invalid model")
 
         return model
 

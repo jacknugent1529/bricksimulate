@@ -320,6 +320,8 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         return loss
     
     def training_step(self, batch, batch_idx):
+        self.log("train/nodes_per_batch", batch.num_nodes)
+        self.log("train/edges_per_batch", batch.num_edges)
         return self.step(batch, 'train')
     
     def validation_step(self, batch, batch_idx, dataloader_idx=0):

@@ -6,7 +6,7 @@ from torch_geometric.data import Data, InMemoryDataset, HeteroData
 from torch_geometric.transforms import KNNGraph, BaseTransform
 from torch_geometric.utils import to_undirected
 import pickle
-import tqdm
+from tqdm import tqdm
 import numpy as np
 from jaxtyping import Float
 
