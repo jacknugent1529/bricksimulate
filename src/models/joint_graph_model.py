@@ -13,20 +13,38 @@ import torchmetrics
 from .generative_model import AbstractGenerativeModel
 
 class GraphProcessor(nn.Module):
-    def __init__(self, dim, num_layers):
+    def __init__(self, dim, num_layers, edge_c, conv_c):
         super().__init__()
         self.dim = dim
+        match edge_c:
+            case 'edge':
+                edge_conv_cls = gnn.EdgeConv
+            case 'dynamic':
+                edge_conv_cls = gnn.DynamicEdgeConv
+            case _:
+                raise ValueError(f"Invalid edge conv choice: {edge_c}")
+            
+        match conv_c:
+            case 'gen':
+                conv_cls = gnn.GENConv
+            case 'trans':
+                conv_cls = gnn.TransformerConv
+            case _:
+                raise ValueError(f"Invalid conv choice: {conv_c}")
+        
 
         get_conv = lambda : gnn.HeteroConv({
-            ('lego', 'to', 'lego'): gnn.GENConv(dim, dim),
-            ('point', 'to', 'point'): gnn.EdgeConv(gnn.MLP([2*dim, 4*dim, dim])),
+            ('lego', 'to', 'lego'): conv_cls(dim, dim),
+            ('point', 'to', 'point'): edge_conv_cls(gnn.MLP([2*dim, 4*dim, dim])),
             ('lego', 'to', 'point'): gnn.GATConv(dim, dim, add_self_loops=False),
             ('point', 'to', 'lego'): gnn.GATConv(dim, dim, add_self_loops=False),
         })
         get_conv2 = lambda : gnn.HeteroConv({
-            ('lego', 'to', 'lego'): gnn.GENConv(dim, dim),
-            ('point', 'to', 'point'): gnn.EdgeConv(gnn.MLP([2*dim, 4*dim, dim])),
+            ('lego', 'to', 'lego'): conv_cls(dim, dim),
+            ('point', 'to', 'point'): edge_conv_cls(gnn.MLP([2*dim, 4*dim, dim])),
         })
+        
+
         def get_conv_stack():
             return gnn.Sequential('x_dict, edge_index_dict, edge_attr_dict', [
                 (get_conv(), 'x_dict, edge_index_dict, edge_attr_dict->x_dict'),
@@ -221,7 +239,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         - this is the second loss
     5. Using the true brick type, node, and voxel representations, predict the direction/x_shift/y_shift
     """
-    def __init__(self, dim, num_bricks, num_layers, l = 1, g = 1):
+    def __init__(self, dim, num_bricks, num_layers, edge_c, conv_c, l = 1, g = 1):
         super().__init__()
 
         self.save_hyperparameters()
@@ -236,7 +254,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         self.graph_embed = GraphEmbed(dim, self.brick_embed, max_x_shift=3, max_y_shift=3)
 
         # process joint point cloud + lego model graph
-        self.graph_processor = GraphProcessor(dim, num_layers)
+        self.graph_processor = GraphProcessor(dim, num_layers, edge_c, conv_c)
 
         self.brick_choice_agent = BrickChoiceAgent(dim, num_bricks)
         self.node_choice_agent = NodeChoiceAgent(dim)
@@ -254,6 +272,8 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         parser.add_argument("--dim", type=int, default=128, help='dimension of hidden vectors')
         parser.add_argument("--l", type=int, default=1, help='hyperparameter multiplier for edge_node_loss')
         parser.add_argument("--g", type=int, default=1, help='hyperparameter multiplier for edge_attr_loss')
+        parser.add_argument("--edge_choice", type = str, default = 'edge', help = 'choice of static or dynamic EdgeConv' )
+        parser.add_argument("--conv_choice", type = str, default = 'gen', help = 'choice of Gen or Transformer Conv' )
         return parent_parser
     
     def process_graph(self, batch, return_attn=False):

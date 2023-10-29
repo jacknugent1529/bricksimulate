@@ -21,7 +21,7 @@ trainer_callbacks = [
 def run(args):
     data = JointGraphDataModule(args.data_folder, args.n_points, args.batch_size, args.num_workers, transform=LegoToUndirected('mean'), include_gen_step=True, share_data=args.share_data, randomize_order=args.randomize_order, repeat=args.repeat)
     num_bricks = 3 # 2 rotations + STOP brick
-    model = JointGraphLegoNet(args.dim, num_bricks, args.num_layers, args.l, args.g)
+    model = JointGraphLegoNet(args.dim, num_bricks, args.num_layers, args.edge_choice, args.conv_choice, args.l, args.g)
 
     trainer = pl.Trainer(
         max_epochs=args.epochs, 

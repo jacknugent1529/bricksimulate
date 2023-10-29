@@ -1,8 +1,7 @@
-name: lego_test
+name: lego
 channels:
   - pytorch
   - conda-forge
-  - pyg
 dependencies:
   - python=3.10
   - pytorch
@@ -13,7 +12,6 @@ dependencies:
   - ca-certificates
   - openssl
   - certifi
-  - pyg
   - imageio
   - einops
   - tensorboardx
