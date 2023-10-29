@@ -29,14 +29,14 @@ class LegoToUndirected(BaseTransform):
         
         return data
 
-def complete_bipartite_edges(m,n,prob=0.1):
-    row = torch.arange(m).reshape(-1,1).tile(n).reshape(-1)
-    col = torch.arange(n).repeat(m)
+def complete_bipartite_edges(m,n,prob=0.01):
+    row = torch.arange(m).reshape(-1,1).tile(n).reshape(-1).numpy()
+    col = torch.arange(n).repeat(m).numpy()
     n = int(prob * len(row))
-    indices = list(zip(row, col))
-    random_pairs = random.sample(indices, n)
-    random_pairs = torch.tensor(np.array(random_pairs)).T
-    return random_pairs
+    indices = np.random.choice(len(row), n, replace=False)
+    row = row[indices]
+    col = col[indices]
+    return torch.stack((torch.from_numpy(row), torch.from_numpy(col)), dim=0)
 
 def sample_point_cloud_from_prisms(prisms: PrismArr, N: int) -> Float[Tensor, "n 3"]:
     """Generate points uniformly within prisms"""
@@ -64,8 +64,8 @@ def make_joint_graph(lego: Data, point_cloud_graph: Data) -> HeteroData:
     data['point'].pos = point_cloud_graph.pos
     data['point', 'point'].edge_index = point_cloud_graph.edge_index
 
-    data['lego', 'point'].edge_index = complete_bipartite_edges(data['lego'].num_nodes, data['point'].num_nodes, prob=0.1)
-    data['point', 'lego'].edge_index = complete_bipartite_edges(data['point'].num_nodes, data['lego'].num_nodes, prob=0.1)
+    data['lego', 'point'].edge_index = complete_bipartite_edges(data['lego'].num_nodes, data['point'].num_nodes, prob=0.01)
+    data['point', 'lego'].edge_index = complete_bipartite_edges(data['point'].num_nodes, data['lego'].num_nodes, prob=0.01)
 
     return data
 
