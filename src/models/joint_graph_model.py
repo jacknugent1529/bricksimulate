@@ -141,7 +141,7 @@ class BrickEmbed(nn.Module):
         return self.emb(self.to_idx(x))
 
 class BrickChoiceAgent(nn.Module):
-    def __init__(self, dim, num_bricks):
+    def __init__(self, dim, num_bricks, aggr_type):
         super().__init__()
     
         self.ffn = nn.Sequential(
@@ -150,8 +150,15 @@ class BrickChoiceAgent(nn.Module):
             nn.Linear(4 * dim, dim)
         )
 
-        #TODO: could replace this with RNN
-        self.graph_agg = lambda node_repr, batch: gnn.global_mean_pool(node_repr, batch)
+        match aggr_type:
+            case "mean":
+                self.graph_agg = gnn.MeanAggregation()
+            case "max":
+                self.graph_agg = gnn.MaxAggregation()
+            case "gru":
+                self.graph_agg = gnn.GRUAggregation(dim, dim)
+            case _:
+                raise ValueError("Invalid aggregation choice")
 
         self.proj = nn.Linear(dim, num_bricks)
     
@@ -221,7 +228,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         - this is the second loss
     5. Using the true brick type, node, and voxel representations, predict the direction/x_shift/y_shift
     """
-    def __init__(self, dim, num_bricks, num_layers, l = 1, g = 1):
+    def __init__(self, dim, num_bricks, num_layers, l = 1, g = 1, aggr_type='mean'):
         super().__init__()
 
         self.save_hyperparameters()
@@ -238,7 +245,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         # process joint point cloud + lego model graph
         self.graph_processor = GraphProcessor(dim, num_layers)
 
-        self.brick_choice_agent = BrickChoiceAgent(dim, num_bricks)
+        self.brick_choice_agent = BrickChoiceAgent(dim, num_bricks, aggr_type)
         self.node_choice_agent = NodeChoiceAgent(dim)
         self.edge_choice_agent = EdgeChoiceAgent(dim, self.graph_embed.num_edge_embeddings)
 
@@ -254,6 +261,7 @@ class LegoNet(pl.LightningModule, AbstractGenerativeModel):
         parser.add_argument("--dim", type=int, default=128, help='dimension of hidden vectors')
         parser.add_argument("--l", type=int, default=1, help='hyperparameter multiplier for edge_node_loss')
         parser.add_argument("--g", type=int, default=1, help='hyperparameter multiplier for edge_attr_loss')
+        parser.add_argument("--aggr", type=str, choices=['mean', 'gru', 'max'], default='mean')
         return parent_parser
     
     def process_graph(self, batch, return_attn=False):

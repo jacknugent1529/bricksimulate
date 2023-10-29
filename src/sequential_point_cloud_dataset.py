@@ -83,8 +83,8 @@ class JointGraphDataModule(pl.LightningDataModule):
     
     def prepare_data(self) -> None:
         data = SequentialLegoDataJointGraph(self.datafolder, "train", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
-        data = SequentialLegoDataJointGraph(self.datafolder, "val", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
-        data = SequentialLegoDataJointGraph(self.datafolder, "gen", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
+        data = SequentialLegoDataJointGraph(self.datafolder, "val", self.n_points, transform=self.transform, random_order=self.random_order)
+        data = SequentialLegoDataJointGraph(self.datafolder, "gen", self.n_points, transform=self.transform, random_order=self.random_order)
     
     def train_dataloader(self):
         train_ds = SequentialLegoDataJointGraph(self.datafolder, "train", self.n_points, transform=self.transform, random_order=self.random_order, repeat=self.repeat)
