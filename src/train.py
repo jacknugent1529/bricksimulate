@@ -19,7 +19,7 @@ trainer_callbacks = [
 ]
 
 def run(args):
-    data = JointGraphDataModule(args.data_folder, args.n_points, args.batch_size, args.num_workers, transform=LegoToUndirected('mean'), include_gen_step=True, share_data=args.share_data, randomize_order=args.randomize_order, repeat=args.repeat)
+    data = JointGraphDataModule(args.data_folder, args.n_points, args.batch_size, args.num_workers, transform=LegoToUndirected('mean'), include_gen_step=not args.skip_gen_step, share_data=args.share_data, randomize_order=args.randomize_order, repeat=args.repeat)
     num_bricks = 3 # 2 rotations + STOP brick
     model = JointGraphLegoNet(args.dim, num_bricks, args.num_layers, args.edge_choice, args.conv_choice, args.l, args.g, args.aggr)
 
@@ -30,6 +30,7 @@ def run(args):
         log_every_n_steps=1,
         # precision=16,
         callbacks=trainer_callbacks, 
+        # profiler='pytorch',
     )
 
     trainer.fit(model=model, datamodule=data)
@@ -51,6 +52,7 @@ def main():
     parser.add_argument("--check-val-every-n-epoch", type=int, default=1)
     parser.add_argument("--share-data", action="store_true")
     parser.add_argument("--num-layers", type=int, default=3)
+    parser.add_argument("--skip-gen-step", action='store_true')
 
     parser = JointGraphLegoNet.add_model_specific_args(parser)
 
