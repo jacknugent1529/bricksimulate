@@ -1,6 +1,10 @@
-# Lego Project
+# BricksByBits: A generative model for Legos
+This repository includes the training for a generative lego model, implemented
+with PyTorch and PyTorch Geometric. This model generates lego instructions based
+on a voxel "outline."
 
-## Project Setup
+
+### Project Setup
 1. Make sure [git lfs](https://git-lfs.com/) is installed (run `git lfs install`). This will be used for dataset files.
 2. install necessary packages (use `conda env create -f environment.yml`)
 3. unzip `data.zip`
@@ -8,10 +12,6 @@
 5. Try running `python main.py --data-folder data -B 128 --dim 256 --epochs 10 --num-workers 3 --fast-dev-run`
 - will take a while the first time to process the data
 - to run a full training cycle (not just a test run), remove the `--fast-dev-run` flag
-
-
-
-## Notes
 
 ### Data
 The `data.zip` file should contain the following structure:
@@ -22,7 +22,6 @@ data
 └── raw
 ```
 - ldr_files - this contains ldraw files. These can be viewed with [ldview](https://tcobbs.github.io/ldview/)
-    - since a few of these files seem to be invalid, the numbers unfortunately might not match up with the index in the dataset (TODO: fix this)
 - processed - this is generated automatically by the LegoData class when the dataset is loaded
 - raw - this contains a pickle file representing the lego model graphs as python dictionaries. For example
     ```python
@@ -46,7 +45,7 @@ data
     ```
 
 ### `LegoModel` Class
-We can change this in the future, but for now, I decided to use the pytorch geometric `Data` class to hold the data. 
+We use pytorch geometric `Data` class to hold the Lego model data. 
 I also implemented a `LegoModel` class which inherits from `Data`. To use with the dataloader and other utility functions, we should keep all data as `Data` objects, but we can explicitly pass the `self` parameter to use functions from the `LegoModel` class.
 
 For example
@@ -58,6 +57,3 @@ For example
     LegoModel.to_voxels(model, 1)
 ```
 
-
-# notes
-- any normalization needed?
