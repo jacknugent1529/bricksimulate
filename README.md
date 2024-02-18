@@ -10,7 +10,7 @@ on a voxel "outline."
 3. unzip `data.zip`
 4. delete `data/processed` folder
 5. Try running `python main.py --data-folder data -B 128 --dim 256 --epochs 10 --num-workers 3 --fast-dev-run`
-- will take a while the first time to process the data
+- it will take a while the first time to process the data
 - to run a full training cycle (not just a test run), remove the `--fast-dev-run` flag
 
 ### Data
